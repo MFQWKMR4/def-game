@@ -45,9 +45,9 @@ export class GameEngine<S extends DefaultGameLogicState, A extends Record<string
         this.storage.saveGameState(gameState);
     }
 
-    async executeAction<T extends keyof A>(action: WsEvent<T, A>): Promise<GameState<S>> {
+    executeAction<T extends keyof A>(action: WsEvent<T, A>): GameState<S> {
         const tasks = this.rules.divider(action);
-        const state = await this.storage.loadGameState();
+        const state = this.storage.loadGameState();
 
         // ------ Game Logic ------
 
@@ -56,7 +56,7 @@ export class GameEngine<S extends DefaultGameLogicState, A extends Record<string
 
         // ------------------------
 
-        await this.storage.saveGameState(newState);
+        this.storage.saveGameState(newState);
         return newState; // this means that this game state is broadcasted to all players
     }
 
