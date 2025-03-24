@@ -9,34 +9,23 @@ export type WsEvent<T extends keyof M, M extends Record<string, any>> = {
     type: T;
     payload: M[T];
 };
-
-export type Task = {
+export type Task<L extends DefaultGameLogicState> = {
     type: string;
-    execute: <T extends DefaultGameLogicState>(gs: T) => TaskResult<T>;
+    execute: (gs: L) => TaskResult<L>;
 };
-
-export interface TaskResult<T extends DefaultGameLogicState> {
-    type: string
-    state: T;
+export interface TaskResult<L extends DefaultGameLogicState> {
+    type: string;
+    state: L;
 }
-
-export type GameState<T extends DefaultGameLogicState> = {
-    gameLogicState: T;
-    taskQueue: Task[];
+export type GameState<L extends DefaultGameLogicState> = {
+    gameLogicState: L;
+    taskQueue: Task<L>[];
 };
-
-export interface GameRule<T extends DefaultGameLogicState, A extends Record<string, any>> {
-    // Initial state
-    initialGameLogicState: () => T;
-
-    // Divide GameState updates into the smallest execution units, called tasks
-    divider<T extends keyof A>(event: WsEvent<T, A>): Task[];
-
-    // Update the task queue
-    prioritizeTasks(newTasks: Task[], gameState: GameState<T>): GameState<T>;
-
-    // Manage task execution (e.g., user interactions)
-    doTask(state: GameState<T>): GameState<T>;
+export interface GameRule<L extends DefaultGameLogicState, A extends Record<string, any>> {
+    initialGameLogicState: () => L;
+    divider<T extends keyof A>(event: WsEvent<T, A>): Task<L>[];
+    prioritizeTasks(newTasks: Task<L>[], gameState: GameState<L>): GameState<L>;
+    doTask(state: GameState<L>): GameState<L>;
 }
 
 // This is a simulator
