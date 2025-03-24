@@ -60,31 +60,31 @@ export class GameEngine<S extends DefaultGameLogicState, A extends Record<string
         return newState; // this means that this game state is broadcasted to all players
     }
 
-    async getState(): Promise<GameState<S>> {
-        return await this.storage.loadGameState();
+    getState(): GameState<S> {
+        return this.storage.loadGameState();
     }
 
-    async setState(state: GameState<S>): Promise<void> {
-        await this.storage.saveGameState(state);
+    setState(state: GameState<S>): void {
+        this.storage.saveGameState(state);
     }
 }
 
 interface GameStateStorage<T extends DefaultGameLogicState> {
-    loadGameState(): Promise<GameState<T>>;
-    saveGameState(state: GameState<T>): Promise<void>;
+    loadGameState(): GameState<T>;
+    saveGameState(state: GameState<T>): void;
 }
 
 class InMemoryGameStateStorage<T extends DefaultGameLogicState> implements GameStateStorage<T> {
     private state: GameState<T> | null = null;
 
-    async loadGameState(): Promise<GameState<T>> {
+    loadGameState(): GameState<T> {
         if (this.state === null) {
             throw new Error('Game state is not initialized');
         }
         return this.state;
     }
 
-    async saveGameState(state: GameState<T>): Promise<void> {
+    saveGameState(state: GameState<T>): void {
         this.state = state;
     }
 }
