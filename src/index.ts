@@ -12,7 +12,7 @@ export type WsEvent<T extends keyof M, M extends Record<string, any>> = {
 
 export type Task = {
     type: string;
-    execute: (gs: DefaultGameLogicState) => TaskResult;
+    execute: <T extends DefaultGameLogicState>(gs: T) => TaskResult;
 };
 
 export interface TaskResult {
