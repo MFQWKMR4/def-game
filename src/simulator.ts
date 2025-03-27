@@ -1,23 +1,23 @@
 import { DefaultGameLogicState, GameRule, GameState, ToServer } from "./types";
 
 // This is a simulator
-export class GameEngine<S extends DefaultGameLogicState> { // like Cloudflare Workers
-    private rules: GameRule<S>; // means the program developer should write
-    private storage: GameStateStorage<S>; // like Durable Object
+export class GameEngine<S extends Record<string, any>, C extends Record<string, any>, L extends DefaultGameLogicState<S, C>> { // like Cloudflare Workers
+    private rules: GameRule<S, C, L>; // means the program developer should write
+    private storage: GameStateStorage<S, C, L>; // like Durable Object
 
-    constructor(rules: GameRule<S>) {
+    constructor(rules: GameRule<S, C, L>) {
         this.rules = rules;
         this.storage = new InMemoryGameStateStorage();
 
         // Initialize the game state
-        const gameState: GameState<S> = {
+        const gameState: GameState<S, C, L> = {
             gameLogicState: this.rules.initialGameLogicState(),
             taskQueue: []
         }
         this.storage.saveGameState(gameState);
     }
 
-    executeAction(action: ToServer): GameState<S> {
+    executeAction(action: ToServer<S, C>): GameState<S, C, L> {
         const tasks = this.rules.divider(action);
         const state = this.storage.loadGameState();
 
@@ -32,31 +32,31 @@ export class GameEngine<S extends DefaultGameLogicState> { // like Cloudflare Wo
         return newState; // this means that this game state is broadcasted to all players
     }
 
-    getState(): GameState<S> {
+    getState(): GameState<S, C, L> {
         return this.storage.loadGameState();
     }
 
-    setState(state: GameState<S>): void {
+    setState(state: GameState<S, C, L>): void {
         this.storage.saveGameState(state);
     }
 }
 
-interface GameStateStorage<T extends DefaultGameLogicState> {
-    loadGameState(): GameState<T>;
-    saveGameState(state: GameState<T>): void;
+interface GameStateStorage<S extends Record<string, any>, C extends Record<string, any>, L extends DefaultGameLogicState<S, C>> {
+    loadGameState(): GameState<S, C, L>;
+    saveGameState(state: GameState<S, C, L>): void;
 }
 
-class InMemoryGameStateStorage<T extends DefaultGameLogicState> implements GameStateStorage<T> {
-    private state: GameState<T> | null = null;
+class InMemoryGameStateStorage<S extends Record<string, any>, C extends Record<string, any>, L extends DefaultGameLogicState<S, C>> implements GameStateStorage<S, C, L> {
+    private state: GameState<S, C, L> | null = null;
 
-    loadGameState(): GameState<T> {
+    loadGameState(): GameState<S, C, L> {
         if (this.state === null) {
             throw new Error('Game state is not initialized');
         }
         return this.state;
     }
 
-    saveGameState(state: GameState<T>): void {
+    saveGameState(state: GameState<S, C, L>): void {
         this.state = state;
     }
 }

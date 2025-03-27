@@ -1,61 +1,65 @@
-// the user should define the data whose type is FromServerMap and ToServerMap
-export type FromServerMap = Record<string, any>;
-export type ToServerMap = Record<string, any>;
-export type InteractionMapType = {
-    [key in InteractionKey]: {
-        fromServer: FromServerMap[key];
-        toServer: ToServerMap[key];
+
+type Map = Record<string, any>;
+
+// the user should define T interface.
+export type FromServerMap<T extends Map> = T;
+export type ToServerMap<T extends Map> = T;
+export type InteractionMapType<S extends Map, C extends Map> = {
+    [key in InteractionKey<S, C>]: {
+        fromServer: FromServerMap<S>[key];
+        toServer: ToServerMap<C>[key];
     }
 }
 // the user should define the game logic state that extends DefaultGameLogicState
-export interface DefaultGameLogicState {
-    forClient: ForClient;
+export interface DefaultGameLogicState<S extends Map, C extends Map> {
+    forClient: ForClient<S, C>;
 };
 
-export type FromServerDataType = keyof FromServerMap;
-export type ToServerDataType = keyof ToServerMap;
+export type FromServerDataType<T extends Map> = keyof FromServerMap<T>;
+export type ToServerDataType<T extends Map> = keyof ToServerMap<T>;
 
-export type FromServerData = {
-    type: FromServerDataType;
-    payload: FromServerMap[FromServerDataType];
+export type FromServerData<T extends Map> = {
+    type: FromServerDataType<T>;
+    payload: FromServerMap<T>[FromServerDataType<T>];
 }
-export type ToServerData = {
-    type: ToServerDataType;
-    payload: ToServerMap[ToServerDataType];
+export type ToServerData<T extends Map> = {
+    type: ToServerDataType<T>;
+    payload: ToServerMap<T>[ToServerDataType<T>];
 }
 
-export type InteractionKey = Extract<keyof FromServerMap, keyof ToServerMap>;
+export type InteractionKey<S extends Map, C extends Map>
+    = Extract<keyof FromServerMap<S>, keyof ToServerMap<C>>;
 
-export type InteractionFromServerData = {
-    type: InteractionKey;
-    payload: InteractionMapType[InteractionKey]["fromServer"];
+export type InteractionFromServerData<S extends Map, C extends Map> = {
+    type: InteractionKey<S, C>;
+    payload: InteractionMapType<S, C>[InteractionKey<S, C>]["fromServer"];
 };
-export type InteractionToServerData = {
-    type: InteractionKey;
-    payload: InteractionMapType[InteractionKey]["toServer"];
+export type InteractionToServerData<S extends Map, C extends Map> = {
+    type: InteractionKey<S, C>;
+    payload: InteractionMapType<S, C>[InteractionKey<S, C>]["toServer"];
 };
 
-export type FromServer = FromServerData | InteractionFromServerData;
-export type ToServer = ToServerData | InteractionToServerData;
+export type FromServer<S extends Map, C extends Map> = FromServerData<S> | InteractionFromServerData<S, C>;
+export type ToServer<S extends Map, C extends Map> = ToServerData<S> | InteractionToServerData<S, C>;
 
 export type PlayerId = string;
-export type ForClient = { [key: PlayerId]: FromServer; };
+export type ForClient<S extends Map, C extends Map> = { [key: PlayerId]: FromServer<S, C>; };
 
-export type Task<L extends DefaultGameLogicState> = {
+export type Task<S extends Map, C extends Map, L extends DefaultGameLogicState<S, C>> = {
     type: string;
-    execute: (gs: L) => TaskResult<L>;
+    execute: (gs: L) => TaskResult<S, C, L>;
 };
-export interface TaskResult<L extends DefaultGameLogicState> {
+export interface TaskResult<S extends Map, C extends Map, L extends DefaultGameLogicState<S, C>> {
     type: string;
     state: L;
 }
-export type GameState<L extends DefaultGameLogicState> = {
+export type GameState<S extends Map, C extends Map, L extends DefaultGameLogicState<S, C>> = {
     gameLogicState: L;
-    taskQueue: Task<L>[];
+    taskQueue: Task<S, C, L>[];
 };
-export interface GameRule<L extends DefaultGameLogicState> {
+export interface GameRule<S extends Map, C extends Map, L extends DefaultGameLogicState<S, C>> {
     initialGameLogicState: () => L;
-    divider(event: ToServer): Task<L>[];
-    prioritizeTasks(newTasks: Task<L>[], gameState: GameState<L>): GameState<L>;
-    doTask(state: GameState<L>): GameState<L>;
+    divider(event: ToServer<S, C>): Task<S, C, L>[];
+    prioritizeTasks(newTasks: Task<S, C, L>[], gameState: GameState<S, C, L>): GameState<S, C, L>;
+    doTask(state: GameState<S, C, L>): GameState<S, C, L>;
 }
