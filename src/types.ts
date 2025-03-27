@@ -10,6 +10,22 @@ export type InteractionMapType<S extends Map, C extends Map> = {
         toServer: ToServerMap<C>[key];
     }
 }
+
+export type Player = {
+    id: PlayerId;
+    name: string;
+};
+
+export type Joiner = {
+    numberOfPlayers: number;
+    enteredPlayers: Player[];
+}
+
+export interface GameParameters {
+    owner: Player;
+    joiner: Joiner;
+}
+
 // the user should define the game logic state that extends DefaultGameLogicState
 export interface DefaultGameLogicState<S extends Map, C extends Map> {
     forClient: ForClient<S, C>;
@@ -53,13 +69,16 @@ export interface TaskResult<S extends Map, C extends Map, L extends DefaultGameL
     type: string;
     state: L;
 }
-export type GameState<S extends Map, C extends Map, L extends DefaultGameLogicState<S, C>> = {
+export type GameState<S extends Map, C extends Map, L extends DefaultGameLogicState<S, C>, P extends GameParameters> = {
     gameLogicState: L;
     taskQueue: Task<S, C, L>[];
+    gameParameters: P | null;
 };
-export interface GameRule<S extends Map, C extends Map, L extends DefaultGameLogicState<S, C>> {
+export interface GameRule<S extends Map, C extends Map, L extends DefaultGameLogicState<S, C>, P extends GameParameters> {
     initialGameLogicState: () => L;
+    createRoom: (state: GameState<S, C, L, P>, param: P) => GameState<S, C, L, P>;
+    onStartGame: (state: GameState<S, C, L, P>, joiner: Player) => GameState<S, C, L, P>;
     divider(event: ToServer<S, C>): Task<S, C, L>[];
-    prioritizeTasks(newTasks: Task<S, C, L>[], gameState: GameState<S, C, L>): GameState<S, C, L>;
-    doTask(state: GameState<S, C, L>): GameState<S, C, L>;
+    prioritizeTasks(newTasks: Task<S, C, L>[], gameState: GameState<S, C, L, P>): GameState<S, C, L, P>;
+    doTask(state: GameState<S, C, L, P>): GameState<S, C, L, P>;
 }
