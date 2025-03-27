@@ -40,7 +40,7 @@ export type InteractionToServerData<S extends Map, C extends Map> = {
 };
 
 export type FromServer<S extends Map, C extends Map> = FromServerData<S> | InteractionFromServerData<S, C>;
-export type ToServer<S extends Map, C extends Map> = ToServerData<S> | InteractionToServerData<S, C>;
+export type ToServer<S extends Map, C extends Map> = ToServerData<C> | InteractionToServerData<S, C>;
 
 export type PlayerId = string;
 export type ForClient<S extends Map, C extends Map> = { [key: PlayerId]: FromServer<S, C>; };
