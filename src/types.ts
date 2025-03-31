@@ -4,6 +4,7 @@ type Map = Record<string, any>;
 // the user should define T interface.
 export type FromServerMap<T extends Map> = T;
 export type ToServerMap<T extends Map> = T;
+export type TaskMap<T extends Map> = T;
 export type InteractionMapType<S extends Map, C extends Map> = {
     [key in InteractionKey<S, C>]: {
         fromServer: FromServerMap<S>[key];
@@ -61,24 +62,24 @@ export type ToServer<S extends Map, C extends Map> = ToServerData<C> | Interacti
 export type PlayerId = string;
 export type ForClient<S extends Map, C extends Map> = { [key: PlayerId]: FromServer<S, C>; };
 
-export type Task<S extends Map, C extends Map, L extends DefaultGameLogicState<S, C>> = {
-    type: string;
-    execute: (gs: L) => TaskResult<S, C, L>;
+export type Task<T extends Map> = {
+    type: keyof TaskMap<T>;
+    args: TaskMap<T>[keyof TaskMap<T>];
 };
 export interface TaskResult<S extends Map, C extends Map, L extends DefaultGameLogicState<S, C>> {
     type: string;
     state: L;
 }
-export type GameState<S extends Map, C extends Map, L extends DefaultGameLogicState<S, C>, P extends GameParameters> = {
+export type GameState<T extends Map, S extends Map, C extends Map, L extends DefaultGameLogicState<S, C>, P extends GameParameters> = {
     gameLogicState: L;
-    taskQueue: Task<S, C, L>[];
+    taskQueue: Task<T>[];
     gameParameters: P | null;
 };
-export interface GameRule<S extends Map, C extends Map, L extends DefaultGameLogicState<S, C>, P extends GameParameters> {
+export interface GameRule<T extends Map, S extends Map, C extends Map, L extends DefaultGameLogicState<S, C>, P extends GameParameters> {
     initialGameLogicState: () => L;
-    createRoom: (state: GameState<S, C, L, P>, param: P) => GameState<S, C, L, P>;
-    onStartGame: (state: GameState<S, C, L, P>, joiner: Player) => GameState<S, C, L, P>;
-    divider(event: ToServer<S, C>): Task<S, C, L>[];
-    prioritizeTasks(newTasks: Task<S, C, L>[], gameState: GameState<S, C, L, P>): GameState<S, C, L, P>;
-    doTask(state: GameState<S, C, L, P>): GameState<S, C, L, P>;
+    createRoom: (state: GameState<T, S, C, L, P>, param: P) => GameState<T, S, C, L, P>;
+    onStartGame: (state: GameState<T, S, C, L, P>, joiner: Player) => GameState<T, S, C, L, P>;
+    divider(event: ToServer<S, C>): Task<T>[];
+    prioritizeTasks(newTasks: Task<T>[], gameState: GameState<T, S, C, L, P>): GameState<T, S, C, L, P>;
+    doTask(state: GameState<T, S, C, L, P>): GameState<T, S, C, L, P>;
 }
