@@ -31,13 +31,12 @@ export class GameEngine<T extends Record<string, any>, S extends Record<string, 
     }
 
     executeAction(action: ToServer<S, C>): GameState<T, S, C, L, P> {
-        const tasks = this.rules.divider(action);
         const state = this.storage.loadGameState();
 
         // ------ Game Logic ------
-
+        const tasks = this.rules.generateTasks(state, action);
         const updatedQueueState = this.rules.prioritizeTasks(tasks, state);
-        const newState = this.rules.doTask(updatedQueueState);
+        const newState = this.rules.doTasks(updatedQueueState);
 
         // ------------------------
 

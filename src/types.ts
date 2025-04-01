@@ -79,7 +79,7 @@ export interface GameRule<T extends Map, S extends Map, C extends Map, L extends
     initialGameLogicState: () => L;
     createRoom: (state: GameState<T, S, C, L, P>, param: P) => GameState<T, S, C, L, P>;
     onStartGame: (state: GameState<T, S, C, L, P>, joiner: Player) => GameState<T, S, C, L, P>;
-    divider(event: ToServer<S, C>): Task<T>[];
+    generateTasks(state: GameState<T, S, C, L, P>, event: ToServer<S, C>): Task<T>[];
     prioritizeTasks(newTasks: Task<T>[], gameState: GameState<T, S, C, L, P>): GameState<T, S, C, L, P>;
-    doTask(state: GameState<T, S, C, L, P>): GameState<T, S, C, L, P>;
+    doTasks(state: GameState<T, S, C, L, P>): GameState<T, S, C, L, P>;
 }
