@@ -60,7 +60,11 @@ export type FromServer<S extends Map, C extends Map> = FromServerData<S> | Inter
 export type ToServer<S extends Map, C extends Map> = ToServerData<C> | InteractionToServerData<S, C>;
 
 export type PlayerId = string;
-export type ForClient<S extends Map, C extends Map> = { [key: PlayerId]: FromServer<S, C>[]; };
+export type ForUI<S extends Map, C extends Map> = {
+    requiredAction: FromServer<S, C> | null;
+    notifications: FromServer<S, C>[];
+};
+export type ForClient<S extends Map, C extends Map> = { [key: PlayerId]: ForUI<S, C>; };
 
 export type Task<T extends Map> = {
     type: keyof TaskMap<T>;
