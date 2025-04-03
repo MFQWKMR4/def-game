@@ -1,7 +1,7 @@
-import { DefaultGameLogicState, GameParameters, GameRule, GameState, Joiner, Player, ToServer } from "./types";
+import { DefaultGameLogicState, GameParameters, GameRule, GameState, Joiner, Player, ReqMap, ToServer } from "./types";
 
 // This is a simulator
-export class GameEngine<T extends Record<string, any>, S extends Record<string, any>, C extends Record<string, any>, L extends DefaultGameLogicState<S, C>, P extends GameParameters> { // like Cloudflare Workers
+export class GameEngine<T extends Record<string, any>, S extends Record<string, any>, C extends ReqMap, L extends DefaultGameLogicState<S>, P extends GameParameters> { // like Cloudflare Workers
     private rules: GameRule<T, S, C, L, P>; // means the program developer should write
     private storage: GameStateStorage<T, S, C, L, P>; // like Durable Object
 
@@ -30,7 +30,7 @@ export class GameEngine<T extends Record<string, any>, S extends Record<string, 
         this.storage.saveGameState(started);
     }
 
-    executeAction(action: ToServer<S, C>): GameState<T, S, C, L, P> {
+    executeAction(action: ToServer<C>): GameState<T, S, C, L, P> {
         const state = this.storage.loadGameState();
 
         // ------ Game Logic ------
@@ -53,12 +53,12 @@ export class GameEngine<T extends Record<string, any>, S extends Record<string, 
     }
 }
 
-interface GameStateStorage<T extends Record<string, any>, S extends Record<string, any>, C extends Record<string, any>, L extends DefaultGameLogicState<S, C>, P extends GameParameters> {
+interface GameStateStorage<T extends Record<string, any>, S extends Record<string, any>, C extends Record<string, any>, L extends DefaultGameLogicState<S>, P extends GameParameters> {
     loadGameState(): GameState<T, S, C, L, P>;
     saveGameState(state: GameState<T, S, C, L, P>): void;
 }
 
-class InMemoryGameStateStorage<T extends Record<string, any>, S extends Record<string, any>, C extends Record<string, any>, L extends DefaultGameLogicState<S, C>, P extends GameParameters> implements GameStateStorage<T, S, C, L, P> {
+class InMemoryGameStateStorage<T extends Record<string, any>, S extends Record<string, any>, C extends Record<string, any>, L extends DefaultGameLogicState<S>, P extends GameParameters> implements GameStateStorage<T, S, C, L, P> {
     private state: GameState<T, S, C, L, P> | null = null;
 
     loadGameState(): GameState<T, S, C, L, P> {
