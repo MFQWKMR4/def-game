@@ -18,11 +18,20 @@ export type ToServerMap<T extends ReqMap> = T;
 export type CustomTaskMap<T extends Map> = T;
 
 export type ExtractSimplePayload<T> = T extends Simple<infer U> ? U : never;
-export type SimpleOnly<T extends ReqMap> = {
+export type ExtractCustomPayload<T> = T extends Custom<infer U> ? U : never;
+
+export type SimpleOnlyPayload<T extends ReqMap> = {
     [K in keyof T as T[K] extends Simple<any> ? K : never]: ExtractSimplePayload<T[K]>;
 };
+export type CustomOnlyPayload<T extends ReqMap> = {
+    [K in keyof T as T[K] extends Custom<any> ? K : never]: ExtractCustomPayload<T[K]>;
+};
 
-export type TaskMapType<A extends ReqMap, B extends Map> = Merge<SimpleOnly<A>, CustomTaskMap<B>>;
+export type CustomOnly<T extends ReqMap> = {
+    [K in keyof T as T[K] extends Custom<any> ? K : never]: T[K];
+};
+
+export type TaskMapType<A extends ReqMap, B extends Map> = Merge<SimpleOnlyPayload<A>, CustomTaskMap<B>>;
 
 export type Player = {
     id: PlayerId;
