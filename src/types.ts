@@ -8,7 +8,7 @@ type Merge<A, B> = {
 };
 
 export interface ReqPayload {
-    senderId: PlayerId;
+    playerId: PlayerId;
 }
 export type ReqMap = Record<string, Simple<ReqPayload> | Custom<ReqPayload>>;
 export type Simple<T extends ReqPayload> = { kind: "simple"; value: T };
@@ -73,6 +73,15 @@ export type ToServerData<T extends ReqMap> = {
 export type FromServer<S extends Map> = FromServerData<S>;
 export type ToServer<C extends ReqMap> = ToServerData<C>;
 
+// I want to make a type that is defined as `ToServer<C extends ReqMap>`
+// C extends ReqMap , but C's key is not a string
+export type ToServerWithNonStringKey<C extends ReqMap> = {
+    [K in keyof C]: {
+        type: K;
+        payload: C[K];
+    }
+}[keyof C];
+
 export type PlayerId = string;
 export type ForUI<S extends Map> = {
     requiredAction: FromServer<S> | null;
@@ -104,3 +113,9 @@ export interface GameRule<T extends Map, S extends Map, C extends ReqMap, L exte
     prioritizeTasks(newTasks: Task<C, T>[], gameState: GameState<T, S, C, L, P>): GameState<T, S, C, L, P>;
     doTasks(state: GameState<T, S, C, L, P>): GameState<T, S, C, L, P>;
 }
+
+// Example of a type that extends ReqMap
+type MyReqMap = {
+    login: Simple<ReqPayload> | Custom<ReqPayload>;
+    move: Simple<ReqPayload> | Custom<ReqPayload>;
+};

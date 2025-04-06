@@ -1,14 +1,12 @@
-import { CustomEventHander, simplify } from "./helper";
-import { Custom, CustomOnly, PlayerId, ReqPayload, Simple, Task, ToServer } from "./types";
+import { custom, CustomEventHander, simplify } from "./helper";
+import { Custom, CustomOnly, PlayerId, ReqMap, ReqPayload, Simple, Task, ToServer } from "./types";
 
 // req payload
 interface LoginReq extends ReqPayload {
-    senderId: PlayerId;
     name: string;
 }
 
 interface MoveReq extends ReqPayload {
-    senderId: PlayerId;
     direction: "up" | "down" | "left" | "right";
 }
 
@@ -40,7 +38,7 @@ type AuthenticateTask = {
 }
 
 type ComplicatedReq = {
-    senderId: PlayerId;
+    playerId: PlayerId;
     name: string;
     level: number;
 }
@@ -50,7 +48,7 @@ type Req = {
     "login": Custom<LoginReq>;
     "move": Simple<MoveReq>;
     "complicatedReq": Custom<ComplicatedReq>;
-}
+};
 
 type A = {
     "move": Simple<MoveReq>;
@@ -58,6 +56,14 @@ type A = {
 
 // A equals to SimpleOnly<Req>
 
+
+const test: ToServer<Req> = {
+    type: "login",
+    payload: custom({
+        playerId: "a",
+        name: "b",
+    }),
+}
 
 
 // define the task types
