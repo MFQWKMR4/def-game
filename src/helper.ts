@@ -1,4 +1,4 @@
-import { Custom, CustomOnly, ReqMap, ReqPayload, Simple, SimpleOnlyPayload, Task, TaskMapType, ToServer } from "./types"
+import { Custom, CustomOnly, Notify, ReqMap, ReqPayload, Require, RequireSetting, Simple, SimpleOnlyPayload, Task, TaskMapType, ToServer } from "./types"
 
 export const simple = <T extends ReqPayload>(payload: T): Simple<T> => {
     return {
@@ -10,6 +10,21 @@ export const simple = <T extends ReqPayload>(payload: T): Simple<T> => {
 export const custom = <T extends ReqPayload>(payload: T): Custom<T> => {
     return {
         kind: "custom",
+        value: payload
+    }
+}
+
+export const requiring = <T extends ReqPayload>(payload: T, setting: RequireSetting): Require<T> => {
+    return {
+        kind: "require",
+        value: payload,
+        setting
+    }
+}
+
+export const notifying = <T extends ReqPayload>(payload: T): Notify<T> => {
+    return {
+        kind: "notify",
         value: payload
     }
 }
