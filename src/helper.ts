@@ -14,7 +14,7 @@ export const custom = <T extends ReqPayload>(payload: T): Custom<T> => {
     }
 }
 
-export const requiring = <T extends ReqPayload>(payload: T, setting: RequireSetting): Require<T> => {
+export const requiring = <T>(payload: T, setting: RequireSetting): Require<T> => {
     return {
         kind: "require",
         value: payload,
@@ -22,7 +22,7 @@ export const requiring = <T extends ReqPayload>(payload: T, setting: RequireSett
     }
 }
 
-export const notifying = <T extends ReqPayload>(payload: T): Notify<T> => {
+export const notifying = <T>(payload: T): Notify<T> => {
     return {
         kind: "notify",
         value: payload
