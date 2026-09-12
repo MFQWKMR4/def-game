@@ -11,7 +11,7 @@ Usage: def-game generate-worker --config <file.json> [--force | --check]
 Generate a Hono Worker, SQLite Durable Object, waki.work authentication and Wrangler config.
 --force  Replace differing output files (never edits the game adapter).
 --check  Verify generated files match without writing anything.
-Node.js 20+ is required. Timeout and Effect execution are not included in this version.`;
+Node.js 20+ is required. Set timeout: true in the config to generate decision timeout scheduling.`;
 
 function relativeImport(from, target) {
   let value = path.relative(path.dirname(from), target).split(path.sep).join('/').replace(/\.ts$/, '.js');
@@ -39,7 +39,8 @@ function main(args) {
   const root = path.dirname(configPath);
   const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
   if (!config || typeof config !== 'object' || Array.isArray(config)) throw new Error('Config must be an object');
-  const allowed = new Set(['outputDir', 'adapter', 'entry', 'wranglerConfig', 'name', 'assets', 'compatibilityDate']);
+  const allowed = new Set(['outputDir', 'adapter', 'entry', 'wranglerConfig', 'name', 'assets', 'compatibilityDate', 'timeout']);
+  if (config.timeout !== undefined && typeof config.timeout !== 'boolean') throw new Error('timeout must be boolean');
   for (const key of Object.keys(config)) if (!allowed.has(key)) throw new Error(`Unknown config key: ${key}`);
   const required = (key) => {
     if (typeof config[key] !== 'string' || !config[key].trim() || config[key].includes('\0')) throw new Error(`Invalid config: ${key}`);
@@ -83,7 +84,8 @@ function main(args) {
   };
   for (const file of ['index.ts', 'session.ts', 'auth.ts', 'env.ts', 'runtime/parse.ts', 'runtime/game-adapter.ts']) {
     const target = path.join(outputDir, file);
-    const source = fs.readFileSync(path.join(__dirname, '../templates/worker', file), 'utf8');
+    const template = config.timeout && ['session.ts', 'runtime/game-adapter.ts'].includes(file) ? path.join('timeout', file) : file;
+    const source = fs.readFileSync(path.join(__dirname, '../templates/worker', template), 'utf8');
     add(target, source.replaceAll('__ADAPTER_IMPORT__', relativeImport(target, adapter)));
   }
   add(entry, `export { default, SessionDurableObject } from ${relativeImport(entry, path.join(outputDir, 'index.ts'))};\n`);

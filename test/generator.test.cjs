@@ -55,7 +55,7 @@ test('preflights overwrite conflicts and repairs only requested output with forc
 
 test('rejects invalid config, output collisions, traversal and symlink outputs before writing', (t) => {
   for (const patch of [{ outputDir: '../escape' }, { entry: 'src/adapter.ts' }, { entry: 'src/generated/index.ts' },
-    { assets: '/absolute' }, { name: 'bad name' }, { compatibilityDate: '2026-02-30' }, { timeout: true }]) {
+    { assets: '/absolute' }, { name: 'bad name' }, { compatibilityDate: '2026-02-30' }, { timeout: "yes" }]) {
     const { root, run } = fixture(t, patch);
     assert.equal(run('--force').status, 1, JSON.stringify(patch));
     assert.equal(fs.existsSync(path.join(root, 'src/generated')), false);
@@ -73,5 +73,15 @@ test('validates CLI options', () => {
     assert.equal(spawnSync(process.execPath, [cli, ...args]).status, 1);
   }
   assert.equal(spawnSync(process.execPath, [cli, '--help']).status, 0);
-  assert.equal(spawnSync(process.execPath, [cli, '--version'], { encoding: 'utf8' }).stdout.trim(), '5.0.1');
+  assert.equal(spawnSync(process.execPath, [cli, '--version'], { encoding: 'utf8' }).stdout.trim(), require('../package.json').version);
+});
+
+test('timeout runtime is opt-in and reproducible', (t) => {
+  const { root, run } = fixture(t, { timeout: true });
+  assert.equal(run().status, 0);
+  const session = fs.readFileSync(path.join(root, 'src/generated/session.ts'), 'utf8');
+  assert.match(session, /async alarm/);
+  assert.match(session, /txn.setAlarm/);
+  assert.match(session, /origin: "system"/);
+  assert.equal(run('--check').status, 0);
 });

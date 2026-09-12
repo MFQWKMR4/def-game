@@ -39,7 +39,7 @@ V5 は破壊的変更です。GameRule、GameEngine、TaskQueue に関する型�
 
 ## Worker generator（5.0.1）
 
-Hono Worker、SQLite-backed Durable Object、waki.work JWT 認証、Hibernation WebSocket、保存・配信処理を生成します。GameDefinition の契約変更はありません。現在は timeout / Effect 実行なしの構成が対象です。
+Hono Worker、SQLite-backed Durable Object、waki.work JWT 認証、Hibernation WebSocket、保存・配信処理を生成します。GameDefinition の契約変更はありません。標準構成は timeout / Effect 実行なしです。開発版では下記の timeout オプションを追加しています。
 
 server package に `def-game.worker.json` を作ります。全パスはこの設定ファイルのディレクトリ基準です。
 
@@ -96,3 +96,26 @@ npm pack
 npm pack / npm publish の前に prepack で型チェック・ビルド・テストが実行されます。build は dist を作り直すため、削除した旧 API の生成物が混入しません。公開対象は dist、bin、templates、package.json、README、LICENSE です。
 
 main にレビュー済みの変更を反映した後、公開する version と認証アカウントを確認し、検証済みのパッケージを npm publish で公開します。
+
+
+## Decision timeout（5.1.0-timeout.0 開発版）
+
+生成設定に `"timeout": true` を追加すると、DO Alarm と system command 配送を生成します。未指定または false なら従来の構成です。開発版は npm 未公開です。
+
+`GameAdapter<State, Command, View, Error, Effect>` に次の任意の接続点を設定します。
+
+```ts
+timeout: {
+  effect: (effect) => /* { type: "schedule", decisionId: string, deadline: number }
+                        または { type: "cancel", decisionId: string } */,
+  command: (decisionId) => /* ゲーム固有の system command */,
+}
+```
+
+ゲームは新しい decision で再利用しない ID と期限を発行します。同じ decision 内の部分完了では Effect を出しません。default action・pending actors・bot policy はゲーム側に残します。runtime は State を解釈せず、1つの現在予約を保存します。独立した複数の同時 decision のスケジューラーではありません。
+
+状態・予約・Alarm は同じ storage transaction で確定します。Alarm は保存済み予約から system command を生成し、古い発火が新しい予約を期限前に処理しないよう再予約します。domain も ID・期限を検証してください。期限を迎えた予約は成功した遷移と同じ transaction で消費し、次の予約があれば置き換えます。失敗は例外として伝播し Cloudflare の有限回の再試行に委ねます。無制限の再試行・外部 Effect の配送は含みません。
+
+このオプションで扱う Effect は timeout の予約・解除のみです。外部通知と異なり、Alarm は状態と原子的に保存するローカルな永続化処理です。外部サービス呼び出しは transaction 内に追加しないでください。
+
+実行環境の検証: Node.js 24、TypeScript 5.6、Hono 4.13、jose 6.2、Wrangler 4.131、Cloudflare Vitest plugin 1.1。標準構成・任意構成の生成一致を generator テストで確認しています。
