@@ -39,7 +39,7 @@ V5 は破壊的変更です。GameRule、GameEngine、TaskQueue に関する型�
 
 ## Worker generator（5.0.1）
 
-Selfish で検証した Hono Worker、SQLite-backed Durable Object、waki.work JWT 認証、Hibernation WebSocket、保存・配信処理を生成します。GameDefinition の契約変更はありません。現在は timeout / Effect 実行なしの構成が対象です。
+Hono Worker、SQLite-backed Durable Object、waki.work JWT 認証、Hibernation WebSocket、保存・配信処理を生成します。GameDefinition の契約変更はありません。現在は timeout / Effect 実行なしの構成が対象です。
 
 server package に `def-game.worker.json` を作ります。全パスはこの設定ファイルのディレクトリ基準です。
 
@@ -62,7 +62,9 @@ npx def-game generate-worker --config def-game.worker.json
 npx def-game generate-worker --config def-game.worker.json --check
 ```
 
-生成対象は `outputDir` 内の `index.ts`、`session.ts`、`auth.ts`、`env.ts`、`runtime/parse.ts`、`runtime/game-adapter.ts` と、`entry`、`wranglerConfig` の計8ファイルです。Hono / jose は利用側の runtime dependency で、generator 自体に実行時依存はありません。Selfish は Hono 4.13.7、jose 6.2.12、Wrangler 4.131.1 で検証しています。
+生成対象は `outputDir` 内の `index.ts`、`session.ts`、`auth.ts`、`env.ts`、`runtime/parse.ts`、`runtime/game-adapter.ts` と、`entry`、`wranglerConfig` の計8ファイルです。Hono / jose は利用側の runtime dependency で、generator 自体に実行時依存はありません。
+
+生成コードは Node.js 24.20.0、TypeScript 5.6.3、Hono 4.13.7、jose 6.2.12、Wrangler 4.131.1、`@cloudflare/workers-types` 5.20260911.1 の環境で、ビルド・型チェック・HTTP / WebSocket / Durable Object の通信テストを確認しています。
 
 ゲーム側は既存ファイルとして `adapter` を用意し、次を export します。このファイル、domain、shared は生成・上書きしません。
 
