@@ -1,6 +1,6 @@
 {
   "name": "def-game",
-  "version": "5.0.0",
+  "version": "5.0.1",
   "description": "Game definition contracts and an in-memory simulator for turn-based games",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -17,10 +17,15 @@
     "typescript": "^5.8.2"
   },
   "files": [
-    "dist"
+    "dist",
+    "bin",
+    "templates"
   ],
   "repository": {
     "type": "git",
     "url": "git+https://github.com/MFQWKMR4/def-game.git"
+  },
+  "bin": {
+    "def-game": "bin/def-game.cjs"
   }
 }

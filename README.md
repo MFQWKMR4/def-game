@@ -37,7 +37,50 @@ V5 は破壊的変更です。GameRule、GameEngine、TaskQueue に関する型�
 - 参加・開始などもゲームの Command として扱います。
 - 旧 GameEngine の代わりに GameSimulator でコマンド列を実行します。
 
-Worker generator はこのリリースには含みません。Selfish の Worker 実装で共通部分を確認した後に追加する予定です。
+## Worker generator（5.0.1）
+
+Hono Worker、SQLite-backed Durable Object、waki.work JWT 認証、Hibernation WebSocket、保存・配信処理を生成します。GameDefinition の契約変更はありません。現在は timeout / Effect 実行なしの構成が対象です。
+
+server package に `def-game.worker.json` を作ります。全パスはこの設定ファイルのディレクトリ基準です。
+
+```json
+{
+  "outputDir": "src/worker",
+  "adapter": "src/worker/game-adapter.ts",
+  "entry": "src/index.ts",
+  "wranglerConfig": "wrangler.jsonc",
+  "name": "my-game",
+  "assets": "../client/public",
+  "compatibilityDate": "2026-09-12"
+}
+```
+
+```sh
+npm install --save-dev def-game@5.0.1 wrangler @cloudflare/workers-types
+npm install hono jose
+npx def-game generate-worker --config def-game.worker.json
+npx def-game generate-worker --config def-game.worker.json --check
+```
+
+生成対象は `outputDir` 内の `index.ts`、`session.ts`、`auth.ts`、`env.ts`、`runtime/parse.ts`、`runtime/game-adapter.ts` と、`entry`、`wranglerConfig` の計8ファイルです。Hono / jose は利用側の runtime dependency で、generator 自体に実行時依存はありません。
+
+生成コードは Node.js 24.20.0、TypeScript 5.6.3、Hono 4.13.7、jose 6.2.12、Wrangler 4.131.1、`@cloudflare/workers-types` 5.20260911.1 の環境で、ビルド・型チェック・HTTP / WebSocket / Durable Object の通信テストを確認しています。
+
+ゲーム側は既存ファイルとして `adapter` を用意し、次を export します。このファイル、domain、shared は生成・上書きしません。
+
+- `gameAdapter`: 生成される `GameAdapter<State, Command, View, Error>` に適合するオブジェクト。
+- `gameAdapter.game`: ゲーム自身の GameDefinition（Effect は `never`）。
+- `parseCreate(input)` / `parseJoin(input)` / `parseCommand(input)`: 未検証入力から command を返す関数。形式不正なら null。WS の関数へ渡るのは envelope 内の command だけです。
+- `canConnect(state, actorId)`: 接続・配信を許可するかの判定。command の認可は GameDefinition が再検証します。
+- 型の export: `State`、`ActorId`（string）、`ServerMessage`、`ProtocolError`、`PublicError`、`CreateSessionResponse`、`JoinSessionResponse`。
+
+公開通信は `GameCommandRequest { requestId, command }`、`GameCommandResponse { requestId, ok, error? }`、`ViewStateEvent { viewState }`、`ProtocolErrorEvent { error }` の type で区別します。HTTP 応答は `CreateSessionResponse` / `JoinSessionResponse` の type と、成功時 `ok: true, sessionId`、失敗時 `ok: false, error` を持ちます。ProtocolError の code は `AuthenticationRequired` / `SessionNotFound` / `NotSessionMember` / `InvalidRequest` / `InternalError`。PublicError はそれとゲームエラーの union です。
+
+認証は Cookie `__token` を JWKS / ES256 / issuer / audience / exp で検証し、UUID の sub を ActorId として使います。Static Assets も認証必須。ログイン誘導・refresh は client の責務です。
+
+出力が同一なら変更しません。既存ファイルと差分がある場合は書き込み前に停止します。確認後に `--force` を付けると生成対象8ファイルだけを更新します。`--check` は欠落・差分を非ゼロ終了で報告し、ファイルを変更しません。生成ファイルは Git 管理し、修正は generator / 設定側へ戻してください。Wrangler 設定も全体が生成対象なので、独自 bindings や migrations の追加には generator の対応が必要です。
+
+CLI は dependencies、package scripts、tsconfig を書き換えません。利用側で Worker の型と Hono / jose を設定し、生成された entry を Wrangler から実行します。CLI には Node.js 20 以降が必要です。
 
 ## 開発と公開
 
@@ -50,6 +93,6 @@ npm pack
 
 開発時のテストには Node.js 20 以降を使用してください。npm test はビルドと Node 標準のシナリオテストを実行します。
 
-npm pack / npm publish の前に prepack で型チェック・ビルド・テストが実行されます。build は dist を作り直すため、削除した旧 API の生成物が混入しません。公開対象は dist、package.json、README、LICENSE です。
+npm pack / npm publish の前に prepack で型チェック・ビルド・テストが実行されます。build は dist を作り直すため、削除した旧 API の生成物が混入しません。公開対象は dist、bin、templates、package.json、README、LICENSE です。
 
 main にレビュー済みの変更を反映した後、公開する version と認証アカウントを確認し、検証済みのパッケージを npm publish で公開します。
