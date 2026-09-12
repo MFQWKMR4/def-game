@@ -9,7 +9,8 @@ export type CommandContext<ActorId> =
 
 /**
  * 成功時は次の安定状態と副作用の宣言、失敗時はゲーム上の拒否理由を返す。
- * 実行側は成功した状態を保存してから Effect を処理する。
+ * 実行側は成功した状態を保存してから外部 Effect を処理する。
+ * 同じストレージ内の Alarm 予約などは、状態と原子的に保存できる。
  */
 export type TransitionResult<State, Effect, Error> =
     | {
