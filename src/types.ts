@@ -130,7 +130,8 @@ export type GameState<T extends Map, S extends Map, C extends ReqMap, L extends 
 export interface GameRule<T extends Map, S extends Map, C extends ReqMap, L extends DefaultGameLogicState<S>, P extends GameParameters> {
     initialGameLogicState: () => L;
     createRoom: (state: GameState<T, S, C, L, P>, param: GameParameters) => GameState<T, S, C, L, P>;
-    onStartGame: (state: GameState<T, S, C, L, P>, joiner: Player) => GameState<T, S, C, L, P>;
+    onJoin: (state: GameState<T, S, C, L, P>, joiner: Player) => GameState<T, S, C, L, P>;
+    onStartGame: (state: GameState<T, S, C, L, P>) => GameState<T, S, C, L, P>;
     generateTasks(state: GameState<T, S, C, L, P>, event: ToServer<C>): Task<C, T>[];
     prioritizeTasks(newTasks: Task<C, T>[], gameState: GameState<T, S, C, L, P>): GameState<T, S, C, L, P>;
     doTasks(state: GameState<T, S, C, L, P>): GameState<T, S, C, L, P>;

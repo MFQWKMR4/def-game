@@ -26,7 +26,13 @@ export class GameEngine<T extends Record<string, any>, S extends Record<string, 
 
     join(player: Player): void {
         const state = this.storage.loadGameState();
-        const started = this.rules.onStartGame(state, player);
+        const joined = this.rules.onJoin(state, player);
+        this.storage.saveGameState(joined);
+    }
+
+    startGame(): void {
+        const state = this.storage.loadGameState();
+        const started = this.rules.onStartGame(state);
         this.storage.saveGameState(started);
     }
 
