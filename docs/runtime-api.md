@@ -172,7 +172,7 @@ export type TransitionResult<State, Effect, Error> =
 `availableActions`はViewに含める設計上の契約ですが、型の制約で自動的に必須化されてはいません。
 その表示は認可の代わりにならないため、Command実行時にも検証します。
 
-runtimeは接続時とCommand保存後の配信で呼びます。同じActorの複数接続などで何度呼ばれてもStateを変更してはいけません。
+runtimeはHTTP等からの`getView`、接続時、Command保存後の配信で呼びます。同じActorの複数接続などで何度呼ばれてもStateを変更してはいけません。
 配信中に例外が出ても保存済みCommandは取り消しません。該当接続は閉じられ、診断対象になります。
 
 <a id="adapter-properties"></a>
@@ -313,14 +313,43 @@ State・Command・Effect・元の例外本文は引数に含めません。未�
 interface VerifiedActor { readonly actorId: string }
 
 // getRoom(namespace, durableObjectId)が返す参照
-interface RoomClient<ActorCommand, Error> {
+interface RoomClient<ActorCommand, Error, View = unknown> {
   create(): Promise<CreateRoomResult>;
+  getView(actor: VerifiedActor): Promise<GetViewResult<View>>;
   dispatchActor(actor: VerifiedActor, command: ActorCommand): Promise<CommandResult<Error>>;
   connect(actor: VerifiedActor): Promise<Response>;
 }
 // getSystemRoom(namespace, durableObjectId)が返す参照
 // { dispatchSystem(command: SystemCommand): Promise<CommandResult<Error>> }
 ```
+
+### getView(actor)：接続せずにViewを取得する
+
+```ts
+const room = getRoom(env.ROOMS, id);
+const result = await room.getView(verifiedActor);
+// 公開HTTPのレスポンスやステータスはアプリで決める
+```
+
+```ts
+type GetViewResult<View> =
+  | { readonly ok: true; readonly view: View }
+  | { readonly ok: false; readonly error: RuntimeError };
+```
+
+runtimeが保存済みStateを読み、既存の`game.project(state, actor.actorId)`を呼んで返します。
+ゲーム側に新しい関数の実装は必要ありません。View型はDOのadapterから推論されます。
+状態変更・Command実行・Effect・WS接続・他の接続への配信は行いません。
+
+`canConnect`は呼びません。認証済みの未参加者にも、projectが部屋の概要等を返せます。
+参加者・観戦者・未参加者で何を見せるかはprojectで判断し、非公開Stateを返さないでください。
+未認証の公開閲覧を提供するAPIではなく、アプリは呼び出し前にActorを認証します。
+
+未作成はRoomNotFound、不正ActorはInvalidRequest、読み取り・projectの例外はInternalErrorです。
+内部例外はonErrorのview区間へ通知し、保存済み状態を変更しません。
+返るのは読み取り時点のViewであり、その後の操作が同じ状態で受理される保証はありません。
+
+### 作成・操作・接続
 
 `create()`は初期状態のみを保存し、二重作成を拒否します。JoinはゲームCommandです。
 `connect()`成功時は101のWS応答を返します。未作成404、接続資格なし403、内部例外500等になります。
@@ -414,10 +443,10 @@ requestIdは応答の対応付け用で、永続的な重複排除には使い�
 
 ### 始め方
 
-Node.js 22以降を使用します。先行公開版`6.0.0-alpha.0`を指定して生成します。
+Node.js 22以降を使用します。`6.1.0`を指定して生成します。
 
 ```sh
-npx def-game@6.0.0-alpha.0 init-worker --directory my-game --name my-game
+npx def-game@6.1.0 init-worker --directory my-game --name my-game
 cd my-game
 npm install
 npm run dev
@@ -425,7 +454,7 @@ npm run dev
 
 開発版をこのリポジトリから試す場合は、リポジトリで`npm pack`を実行します。
 `node bin/def-game.cjs init-worker --directory /path/to/my-game --name my-game`で生成し、生成先で
-`npm install /absolute/path/to/def-game-6.0.0-alpha.0.tgz`を実行してください。
+`npm install /absolute/path/to/def-game-6.1.0.tgz`を実行してください。
 その後は`npm run typecheck`、`npm run build`、`npm run dev`を利用できます。buildはWranglerのdry-runで、公開しません。
 
 生成先は新しいディレクトリに限定します。既存ディレクトリは空でも拒否します。

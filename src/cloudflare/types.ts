@@ -23,6 +23,10 @@ export type CommandResult<Error> = { readonly ok: true } | {
 export type CreateRoomResult = { readonly ok: true; readonly roomId: string }
   | { readonly ok: false; readonly error: RuntimeError };
 
+/** 保存状態そのものではなく、ゲームがActorに公開するViewを返す。 */
+export type GetViewResult<View> = { readonly ok: true; readonly view: View }
+  | { readonly ok: false; readonly error: RuntimeError };
+
 /** 状態と一緒に確定する、1つの現在decisionに対する予約・解除。 */
 export type TimeoutEffect =
   | { readonly type: "schedule"; readonly decisionId: string; readonly deadline: number }

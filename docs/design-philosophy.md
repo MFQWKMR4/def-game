@@ -52,10 +52,10 @@ WS接続後のメッセージはライブラリのWS処理へ届き、毎回Work
 
 ## 1. init-workerで開発を始める
 
-Node.js 22以降で、次を実行します。以下は先行公開版`6.0.0-alpha.0`の利用手順です。
+Node.js 22以降で、次を実行します。以下は`6.1.0`の利用手順です。
 
 ```sh
-npx def-game@6.0.0-alpha.0 init-worker --directory my-game --name my-game
+npx def-game@6.1.0 init-worker --directory my-game --name my-game
 cd my-game
 npm install
 npm run dev
@@ -133,6 +133,8 @@ Joinや設定変更は、その後のゲームCommandとして実装してくだ
 「部屋を作った人が所有者になる」というルールも、ライブラリではなくゲームが決めます。
 
 `project`では、自分の手札などActorに公開できる情報だけを返してください。
+HTTPで部屋の概要や再読み込み用の情報を取得したい場合は、`room.getView(actor)`を使います。
+同じprojectが呼ばれるので、未参加者には要約、参加者には個別情報という出し分けもここで実装します。WSの接続資格は要求しません。
 `availableActions`は画面を作るための補助です。ボタンを非表示にしても不正なCommandは送れるため、操作可否は必ず`handleCommand`でも検証します。
 
 ## 3. ゲームと外部を接続する

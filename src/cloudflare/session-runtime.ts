@@ -1,7 +1,7 @@
 import { DurableObject } from "cloudflare:workers";
 import type { CommandContext } from "../game-definition.js";
 import { failure, isRecord, parseCommandRequest } from "./protocol.js";
-import type { CommandResult, CreateRoomResult, GameAdapter, GameTypes, RuntimeFailure, ServerMessage, TimeoutEffect, VerifiedActor } from "./types.js";
+import type { CommandResult, CreateRoomResult, GetViewResult, GameAdapter, GameTypes, RuntimeFailure, ServerMessage, TimeoutEffect, VerifiedActor } from "./types.js";
 
 const STATE_KEY = "game-state";
 const TIMEOUT_KEY = "decision-timeout";
@@ -26,6 +26,21 @@ export abstract class SessionRuntime<Env, T extends GameTypes> extends DurableOb
         return { ok: true, roomId: this.ctx.id.toString() };
       } catch {
         this.#report("create");
+        return failure("InternalError");
+      }
+    });
+  }
+
+  /** HTTP等からの読み取り。公開内容はprojectが決め、WS接続資格は要求しない。 */
+  async getView(actor: VerifiedActor): Promise<GetViewResult<T["view"]>> {
+    if (!actor || typeof actor.actorId !== "string" || actor.actorId.length === 0) return failure("InvalidRequest");
+    return this.ctx.blockConcurrencyWhile(async () => {
+      try {
+        const state = await this.ctx.storage.get<T["state"]>(STATE_KEY);
+        if (state === undefined) return failure("RoomNotFound");
+        return { ok: true, view: this.adapter.game.project(state, actor.actorId) };
+      } catch {
+        this.#report("view");
         return failure("InternalError");
       }
     });

@@ -77,6 +77,7 @@ export default {
     const room = getRoom(env.ROOMS, id);
     const actor = { actorId: url.searchParams.get('actor') ?? 'alice' };
     // テスト専用の認証代替。実アプリではCookie/JWT等を検証する。
+    if (url.pathname === '/view') return Response.json(await room.getView(actor));
     if (url.pathname === '/connect') return room.connect(actor);
     if (url.pathname === '/create') return Response.json(await room.create());
     if (url.pathname === '/system') return Response.json(await getSystemRoom(env.ROOMS, id).dispatchSystem(await request.json()));
@@ -88,6 +89,13 @@ export default {
 // 呼び出し側でActor/Systemの型が混ざらないことも検証する。
 function checkClientTypes(env: Env, id: DurableObjectId) {
   const room = getRoom(env.ROOMS, id);
+  void room.getView({ actorId: 'guest' }).then(result => {
+    if (result.ok) {
+      const count: number = result.view.count;
+      // @ts-expect-error Viewには秘密の保存状態を公開しない
+      result.view.secret;
+    }
+  });
   // @ts-expect-error 通常の参照にSystem入口はない
   room.dispatchSystem({ type: 'result' });
   // @ts-expect-error System CommandはActor入口に渡せない

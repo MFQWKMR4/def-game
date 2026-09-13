@@ -43,7 +43,7 @@ test('empty creation returns ID, refuses duplicates, join stays a command; helpe
   const result = await stub.create(); assert.equal(result.roomId, stub.id.toString());
   assert.equal((await stub.inspect()).state.members.length, 0);
   assert.equal((await stub.create()).error.code, 'RoomAlreadyExists');
-  assert.deepEqual(await (await mf.dispatchFetch('https://test/keys')).json(), ['create', 'dispatchActor', 'connect']);
+  assert.deepEqual(await (await mf.dispatchFetch('https://test/keys')).json(), ['create', 'getView', 'dispatchActor', 'connect']);
   assert.equal((await stub.dispatchActor({ actorId: '' }, { type: 'join' })).error.code, 'InvalidRequest');
 });
 
@@ -105,4 +105,30 @@ test('projection failure cannot turn committed success into failure or suppress 
   await until(async () => (await stub.inspect()).errors.includes('effect'));
   assert.equal((await stub.inspect()).state.count, -1);
   s.ws.close();
+});
+
+
+test('getView projects for non-members without connecting or changing state, reports failures', async () => {
+  const ns = await mf.getDurableObjectNamespace('ROOMS');
+  const stub = ns.get(ns.idFromName('read-view'));
+  assert.equal((await stub.getView({ actorId: 'guest' })).error.code, 'RoomNotFound');
+  await stub.create();
+  const before = await stub.inspect();
+  const response = await mf.dispatchFetch('https://test/view?room=read-view&actor=guest');
+  assert.deepEqual(await response.json(), { ok: true, view: { count: 0, actorId: 'guest' } });
+  const after = await stub.inspect();
+  assert.equal(after.state.count, before.state.count);
+  assert.equal(after.state.members.length, 0);
+  assert.equal(after.alarm, before.alarm);
+  assert.equal(after.reservation, before.reservation);
+  assert.equal((await stub.getView({ actorId: '' })).error.code, 'InvalidRequest');
+  await stub.dispatchActor({ actorId: 'alice' }, { type: 'join' });
+  await stub.dispatchActor({ actorId: 'alice' }, { type: 'increment' });
+  const latest = await stub.getView({ actorId: 'alice' });
+  assert.equal(latest.ok, true);
+  assert.equal(latest.view.count, 1);
+  assert.equal(latest.view.actorId, 'alice');
+  await stub.dispatchActor({ actorId: 'alice' }, { type: 'projection-error' });
+  assert.equal((await stub.getView({ actorId: 'guest' })).error.code, 'InternalError');
+  assert.equal((await stub.inspect()).state.count, -1);
 });
