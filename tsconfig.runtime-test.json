@@ -1,0 +1,16 @@
+{
+  "extends": "./tsconfig.cloudflare.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "noEmit": true,
+    "paths": {
+      "def-game/cloudflare": [
+        "./src/cloudflare/index.ts"
+      ]
+    }
+  },
+  "include": [
+    "test/fixtures/runtime/worker.ts"
+  ],
+  "exclude": []
+}

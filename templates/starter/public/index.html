@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>DefGame Starter</title>
+  <style>
+    :root { font-family: system-ui, sans-serif; color: #182c32; background: #f1f5f3; }
+    body { max-width: 700px; margin: 48px auto; padding: 0 24px; }
+    h1 { margin-bottom: 8px; } section { background: white; padding: 24px; margin: 20px 0; border-radius: 12px; }
+    input, button, select { font: inherit; padding: 10px; margin: 4px; border: 1px solid #a7b9b4; border-radius: 6px; }
+    button { cursor: pointer; background: #174d46; color: white; } button:disabled { opacity: .4; cursor: default; }
+    #status { min-height: 1.5em; } #invite { width: 95%; } li { margin: 12px 0; }
+    .muted { color: #607570; } [hidden] { display: none !important; }
+  </style>
+</head>
+<body>
+  <h1>DefGame Starter</h1>
+  <p class="muted">2人がデッキを選び、1枚ずつカードを出します。得点が高い方の勝ち。手番は30秒です。</p>
+  <p id="status" role="status">接続を準備しています…</p>
+  <section>
+    <form id="join-form">
+      <label>表示名 <input id="name" maxlength="24" required autocomplete="nickname"></label>
+      <button id="join">部屋を作る</button>
+    </form>
+    <label id="invite-label" hidden>このURLを相手に共有してください<input id="invite" readonly></label>
+  </section>
+  <section id="room" hidden>
+    <h2 id="phase">ロビー</h2>
+    <ul id="players"></ul>
+    <form id="deck-form"><label>デッキ <select id="deck"></select></label><button id="select-deck">選ぶ</button></form>
+    <button id="start" hidden>ゲーム開始</button>
+    <p id="turn"></p>
+    <div id="cards"></div>
+  </section>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,14 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "def-game-starter",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-12",
+  "assets": { "directory": "public", "binding": "ASSETS", "run_worker_first": true },
+  "durable_objects": { "bindings": [{ "name": "ROOMS", "class_name": "RoomDurableObject" }] },
+  "exports": { "RoomDurableObject": { "type": "durable-object", "storage": "sqlite" } },
+  "vars": {
+    "AUTH_ISSUER": "https://auth.waki.work",
+    "AUTH_AUDIENCE": "waki.work",
+    "AUTH_JWKS_URL": "https://auth.waki.work/.well-known/jwks.json"
+  }
+}

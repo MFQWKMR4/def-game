@@ -1,25 +1,33 @@
 {
   "name": "def-game",
-  "version": "5.1.0-effects.0",
-  "description": "Game definition contracts and an in-memory simulator for turn-based games",
+  "version": "6.0.0-alpha.0",
+  "description": "Pure game definitions, a simulator, and a Cloudflare Durable Object runtime for turn-based games",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {
-    "build": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\" && tsc",
-    "typecheck": "tsc --noEmit",
-    "test": "npm run build && node --test test/*.test.cjs",
+    "build": "node scripts/build.cjs",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.cloudflare.json --noEmit && tsc -p tsconfig.runtime-test.json",
+    "test": "npm run build && node --test --test-timeout=30000 test/*.test.cjs",
     "prepack": "npm run typecheck && npm test"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "devDependencies": {
-    "typescript": "^5.8.2"
+    "@cloudflare/workers-types": "^5.20260911.1",
+    "esbuild": "^0.28.2",
+    "hono": "^4.13.7",
+    "jose": "^6.2.12",
+    "miniflare": "5.20260911.0-alpha",
+    "typescript": "^5.8.2",
+    "wrangler": "^4.131.1"
   },
   "files": [
     "dist",
     "bin",
-    "templates"
+    "templates",
+    "docs/design-philosophy.md",
+    "docs/runtime-api.md"
   ],
   "repository": {
     "type": "git",
@@ -27,5 +35,23 @@
   },
   "bin": {
     "def-game": "bin/def-game.cjs"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./cloudflare": {
+      "types": "./dist/worker/cloudflare/index.d.ts",
+      "import": "./dist/worker/cloudflare/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "typesVersions": {
+    "*": {
+      "cloudflare": [
+        "dist/worker/cloudflare/index.d.ts"
+      ]
+    }
   }
 }
