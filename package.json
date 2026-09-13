@@ -1,6 +1,6 @@
 {
   "name": "def-game",
-  "version": "5.1.0-timeout.0",
+  "version": "5.1.0-effects.0",
   "description": "Game definition contracts and an in-memory simulator for turn-based games",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
