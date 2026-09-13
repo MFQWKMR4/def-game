@@ -1,6 +1,6 @@
 import type { SessionDurableObject } from "./session.js";
 
-export interface Env {
+export interface Env extends Record<string, unknown> {
   SESSIONS: DurableObjectNamespace<SessionDurableObject>;
   ASSETS: Fetcher;
   AUTH_ISSUER: string;

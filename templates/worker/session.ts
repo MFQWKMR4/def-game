@@ -4,6 +4,7 @@ import type { Env } from "./env.js";
 import { isRecord, parseCommandRequest } from "./runtime/parse.js";
 
 const STATE_KEY = "game-state";
+type Success = Extract<ReturnType<typeof gameAdapter.game.handleCommand>, { ok: true }>;
 
 /** 生成対象の Session runtime。ゲーム固有の判断は gameAdapter だけを通して呼ぶ。 */
 export class SessionDurableObject extends DurableObject<Env> {
@@ -35,9 +36,10 @@ export class SessionDurableObject extends DurableObject<Env> {
       const result = gameAdapter.game.handleCommand(stored === undefined ? gameAdapter.game.createInitialState() : stored, command, { origin: "actor", actorId });
       if (!result.ok) return Response.json(result, { status: 409 });
       // 作成と作成者の参加は、この1回の保存で確定する。
-      if (result.state !== stored) {
+      if (result.state !== stored || result.effects.length > 0) {
         await this.ctx.storage.put(STATE_KEY, result.state);
         this.broadcast(result.state);
+        this.deliverEffects(result);
       }
       return Response.json({ ok: true });
     });
@@ -64,14 +66,29 @@ export class SessionDurableObject extends DurableObject<Env> {
           return;
         }
         await this.ctx.storage.put(STATE_KEY, result.state);
-        // Effect は現在 never。実装時もこの保存の後に実行し、配送失敗で rollback しない。
         this.send(socket, { type: "GameCommandResponse", requestId: parsed.requestId, ok: true });
         this.broadcast(result.state);
+        this.deliverEffects(result);
       } catch {
         console.error("Session command failed");
         this.send(socket, { type: "GameCommandResponse", requestId: parsed.requestId, ok: false, error: { code: "InternalError" } });
       }
     });
+  }
+
+  /** Fire after commit; isolate failures from the saved command and remaining effects. */
+  private deliverEffects(result: Success): void {
+    this.ctx.waitUntil((async () => {
+      for (const effect of result.effects) {
+        try {
+          if (!gameAdapter.executeEffect) throw new Error("Effect handler is not configured");
+          await gameAdapter.executeEffect(effect, { sessionId: this.ctx.id.toString(), env: this.env });
+        } catch {
+          // Do not log arbitrary effect payloads: games own redaction and recovery records.
+          console.error("Session effect delivery failed", { sessionId: this.ctx.id.toString() });
+        }
+      }
+    })());
   }
 
   private broadcast(state: State): void {

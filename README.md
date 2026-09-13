@@ -39,7 +39,7 @@ V5 は破壊的変更です。GameRule、GameEngine、TaskQueue に関する型�
 
 ## Worker generator（5.0.1）
 
-Hono Worker、SQLite-backed Durable Object、waki.work JWT 認証、Hibernation WebSocket、保存・配信処理を生成します。GameDefinition の契約変更はありません。標準構成は timeout / Effect 実行なしです。開発版では下記の timeout オプションを追加しています。
+Hono Worker、SQLite-backed Durable Object、waki.work JWT 認証、Hibernation WebSocket、保存・配信処理を生成します。GameDefinition の契約変更はありません。timeout は任意の生成オプションです。外部 Effect の実行は任意の adapter フックで接続します。
 
 server package に `def-game.worker.json` を作ります。全パスはこの設定ファイルのディレクトリ基準です。
 
@@ -69,7 +69,7 @@ npx def-game generate-worker --config def-game.worker.json --check
 ゲーム側は既存ファイルとして `adapter` を用意し、次を export します。このファイル、domain、shared は生成・上書きしません。
 
 - `gameAdapter`: 生成される `GameAdapter<State, Command, View, Error>` に適合するオブジェクト。
-- `gameAdapter.game`: ゲーム自身の GameDefinition（Effect は `never`）。
+- `gameAdapter.game`: ゲーム自身の GameDefinition（Effect の省略時は `never`）。
 - `parseCreate(input)` / `parseJoin(input)` / `parseCommand(input)`: 未検証入力から command を返す関数。形式不正なら null。WS の関数へ渡るのは envelope 内の command だけです。
 - `canConnect(state, actorId)`: 接続・配信を許可するかの判定。command の認可は GameDefinition が再検証します。
 - 型の export: `State`、`ActorId`（string）、`ServerMessage`、`ProtocolError`、`PublicError`、`CreateSessionResponse`、`JoinSessionResponse`。
@@ -100,7 +100,7 @@ main にレビュー済みの変更を反映した後、公開する version と
 
 ## Decision timeout（5.1.0-timeout.0 開発版）
 
-生成設定に `"timeout": true` を追加すると、DO Alarm と system command 配送を生成します。未指定または false なら従来の構成です。開発版は npm 未公開です。
+生成設定に `"timeout": true` を追加すると、DO Alarm と system command 配送を生成します。未指定または false なら Alarm を生成しません。
 
 `GameAdapter<State, Command, View, Error, Effect>` に次の任意の接続点を設定します。
 
@@ -114,8 +114,27 @@ timeout: {
 
 ゲームは新しい decision で再利用しない ID と期限を発行します。同じ decision 内の部分完了では Effect を出しません。default action・pending actors・bot policy はゲーム側に残します。runtime は State を解釈せず、1つの現在予約を保存します。独立した複数の同時 decision のスケジューラーではありません。
 
-状態・予約・Alarm は同じ storage transaction で確定します。Alarm は保存済み予約から system command を生成し、古い発火が新しい予約を期限前に処理しないよう再予約します。domain も ID・期限を検証してください。期限を迎えた予約は成功した遷移と同じ transaction で消費し、次の予約があれば置き換えます。失敗は例外として伝播し Cloudflare の有限回の再試行に委ねます。無制限の再試行・外部 Effect の配送は含みません。
+状態・予約・Alarm は同じ storage transaction で確定します。Alarm は保存済み予約から system command を生成し、古い発火が新しい予約を期限前に処理しないよう再予約します。domain も ID・期限を検証してください。期限を迎えた予約は成功した遷移と同じ transaction で消費し、次の予約があれば置き換えます。失敗は例外として伝播し Cloudflare の有限回の再試行に委ねます。Alarm の無制限の再試行は含みません。外部 Effect は下記の保存後フックで扱います。
 
-このオプションで扱う Effect は timeout の予約・解除のみです。外部通知と異なり、Alarm は状態と原子的に保存するローカルな永続化処理です。外部サービス呼び出しは transaction 内に追加しないでください。
+timeout.effect は予約・解除を返し、外部 Effect に対しては null を返します。外部通知と異なり、Alarm は状態と原子的に保存するローカルな永続化処理です。外部サービス呼び出しは transaction 内に追加しないでください。
 
 実行環境の検証: Node.js 24、TypeScript 5.6、Hono 4.13、jose 6.2、Wrangler 4.131、Cloudflare Vitest plugin 1.1。標準構成・任意構成の生成一致を generator テストで確認しています。
+
+## 保存後の外部 Effect（5.1.0-effects.0）
+
+通常構成・timeout 構成の両方で `GameAdapter<State, Command, View, Error, Effect>` に
+`executeEffect(effect, { sessionId, env }): Promise<void>` を指定できます。`env` の追加 binding は
+ゲーム側で検証して使用します。runtime は State・通知先・通知内容を解釈しません。
+
+作成・参加・WebSocket command・Alarm の成功を永続化し、View を配信した後に
+`ctx.waitUntil` で実行します。timeout が処理した予約・解除はフックに渡しません。
+各 Effect の失敗は他の Effect や保存済み結果に影響せず、command を失敗へ戻しません。
+フック未設定の外部 Effect は配送エラーとして記録します。
+
+これは best-effort 配送です。永続 outbox・自動再試行・exactly-once は提供しません。
+保存と外部通知の間のプロセス停止では通知が失われ得ます。ゲーム側で安全な失敗記録と
+手動再送方法を用意し、受信側は sessionId 等の安定したキーで重複を排除してください。
+API key や非公開の GameState をログへ含めないでください。
+
+検証: `npm test` は配布テンプレートを実行し、保存前の失敗、保存後の配送失敗、
+後続 Effect の継続、通常 command と Alarm の経路を確認します。

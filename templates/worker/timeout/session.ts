@@ -41,6 +41,7 @@ export class SessionDurableObject extends DurableObject<Env> {
       if (result.state !== stored || result.effects.length > 0) {
         try { await this.commit(result); } catch { return fail("InternalError", 500); }
         this.broadcast(result.state);
+        this.deliverEffects(result);
       }
       return Response.json({ ok: true });
     });
@@ -69,6 +70,7 @@ export class SessionDurableObject extends DurableObject<Env> {
         await this.commit(result);
         this.send(socket, { type: "GameCommandResponse", requestId: parsed.requestId, ok: true });
         this.broadcast(result.state);
+        this.deliverEffects(result);
       } catch {
         console.error("Session command failed");
         this.send(socket, { type: "GameCommandResponse", requestId: parsed.requestId, ok: false, error: { code: "InternalError" } });
@@ -79,8 +81,7 @@ export class SessionDurableObject extends DurableObject<Env> {
   /** Commit state, reservation and alarm together. No external effects inside the transaction. */
   private async commit(result: Success, consumedDecisionId?: string): Promise<void> {
     const effects = result.effects.map(effect => {
-      if (!gameAdapter.timeout) throw new Error("Timeout adapter required for effects");
-      return gameAdapter.timeout.effect(effect);
+      return gameAdapter.timeout?.effect(effect) ?? null;
     });
     await this.ctx.storage.transaction(async txn => {
       await txn.put(STATE_KEY, result.state);
@@ -92,6 +93,7 @@ export class SessionDurableObject extends DurableObject<Env> {
         }
       }
       for (const effect of effects) {
+        if (effect === null) continue;
         if (effect.type === "schedule") {
           if (!effect.decisionId || !Number.isFinite(effect.deadline)) throw new Error("Invalid timeout reservation");
           await txn.put(TIMEOUT_KEY, { decisionId: effect.decisionId, deadline: effect.deadline });
@@ -123,7 +125,24 @@ export class SessionDurableObject extends DurableObject<Env> {
       // Failed commits throw so Cloudflare can retry. Delivery failure never rolls back committed state.
       await this.commit(result, reservation.decisionId);
       this.broadcast(result.state);
+      this.deliverEffects(result);
     });
+  }
+
+  /** Fire after commit; isolate failures from the saved command and remaining effects. */
+  private deliverEffects(result: Success): void {
+    this.ctx.waitUntil((async () => {
+      for (const effect of result.effects) {
+        if (gameAdapter.timeout?.effect(effect) != null) continue;
+        try {
+          if (!gameAdapter.executeEffect) throw new Error("Effect handler is not configured");
+          await gameAdapter.executeEffect(effect, { sessionId: this.ctx.id.toString(), env: this.env });
+        } catch {
+          // Do not log arbitrary effect payloads: games own redaction and recovery records.
+          console.error("Session effect delivery failed", { sessionId: this.ctx.id.toString() });
+        }
+      }
+    })());
   }
 
   private broadcast(state: State): void {
