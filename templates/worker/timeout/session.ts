@@ -133,7 +133,7 @@ export class SessionDurableObject extends DurableObject<Env> {
   private deliverEffects(result: Success): void {
     this.ctx.waitUntil((async () => {
       for (const effect of result.effects) {
-      if (gameAdapter.timeout?.effect(effect) != null) continue;
+        if (gameAdapter.timeout?.effect(effect) != null) continue;
         try {
           if (!gameAdapter.executeEffect) throw new Error("Effect handler is not configured");
           await gameAdapter.executeEffect(effect, { sessionId: this.ctx.id.toString(), env: this.env });

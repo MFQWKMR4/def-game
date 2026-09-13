@@ -114,7 +114,7 @@ timeout: {
 
 ゲームは新しい decision で再利用しない ID と期限を発行します。同じ decision 内の部分完了では Effect を出しません。default action・pending actors・bot policy はゲーム側に残します。runtime は State を解釈せず、1つの現在予約を保存します。独立した複数の同時 decision のスケジューラーではありません。
 
-状態・予約・Alarm は同じ storage transaction で確定します。Alarm は保存済み予約から system command を生成し、古い発火が新しい予約を期限前に処理しないよう再予約します。domain も ID・期限を検証してください。期限を迎えた予約は成功した遷移と同じ transaction で消費し、次の予約があれば置き換えます。失敗は例外として伝播し Cloudflare の有限回の再試行に委ねます。無制限の再試行・外部 Effect の配送は含みません。
+状態・予約・Alarm は同じ storage transaction で確定します。Alarm は保存済み予約から system command を生成し、古い発火が新しい予約を期限前に処理しないよう再予約します。domain も ID・期限を検証してください。期限を迎えた予約は成功した遷移と同じ transaction で消費し、次の予約があれば置き換えます。失敗は例外として伝播し Cloudflare の有限回の再試行に委ねます。Alarm の無制限の再試行は含みません。外部 Effect は下記の保存後フックで扱います。
 
 timeout.effect は予約・解除を返し、外部 Effect に対しては null を返します。外部通知と異なり、Alarm は状態と原子的に保存するローカルな永続化処理です。外部サービス呼び出しは transaction 内に追加しないでください。
 
