@@ -1,12 +1,12 @@
 import { SessionRuntime, getRoom, getSystemRoom, type GameAdapter, type GameTypes } from 'def-game/cloudflare';
 
-interface State { members: string[]; count: number; secret: string; decision?: string }
+interface State { members: string[]; count: number; secret: string; decision?: string; fired: string[] }
 type ActorCommand = { type: 'join' | 'increment' | 'leave' | 'external' | 'throw-effect' | 'invalid-alarm' | 'projection-error' }
   | { type: 'schedule'; id: string; deadline: number }
   | { type: 'cancel'; id: string }
   | { type: 'trusted'; amount: number };
-type SystemCommand = { type: 'result' } | { type: 'timeout'; id: string };
-type Effect = { type: 'external' | 'throw' } | { type: 'schedule'; decisionId: string; deadline: number } | { type: 'cancel'; decisionId: string };
+type SystemCommand = { type: 'result' } | { type: 'scheduled'; id: string };
+type Effect = { type: 'external' | 'throw' } | { type: 'schedule'; id: string; deadline: number } | { type: 'cancel'; id: string };
 interface Types extends GameTypes {
   state: State; actorCommand: ActorCommand; systemCommand: SystemCommand;
   view: { count: number; actorId: string }; effect: Effect; error: string;
@@ -18,20 +18,21 @@ const errors: { roomId: string; phase: string }[] = [];
 
 const adapter: GameAdapter<Env, Types> = {
   game: {
-    createInitialState: () => ({ members: [], count: 0, secret: 'never-public' }),
+    createInitialState: () => ({ members: [], count: 0, secret: 'never-public', fired: [] }),
     handleCommand(state, command, context) {
-      if (command.type === 'result' || command.type === 'timeout') {
+      if (command.type === 'result' || command.type === 'scheduled') {
         if (context.origin !== 'system') return { ok: false, error: 'system-only' };
-        if (command.type === 'timeout' && state.decision !== command.id) return { ok: false, error: 'stale' };
-        return { ok: true, state: { ...state, count: state.count + 10 }, effects: [] };
+        return { ok: true, state: { ...state, count: state.count + 10,
+          fired: command.type === 'scheduled' ? [...state.fired, command.id] : state.fired },
+          effects: command.type === 'scheduled' && command.id === 'cancel-next' ? [{ type: 'cancel', id: 'next' }] : [] };
       }
       if (context.origin !== 'actor') return { ok: false, error: 'actor-only' };
       if (command.type === 'join') return { ok: true, state: { ...state, members: [...new Set([...state.members, context.actorId])] }, effects: [] };
       if (!state.members.includes(context.actorId)) return { ok: false, error: 'not-member' };
       if (command.type === 'leave') return { ok: true, state: { ...state, members: state.members.filter(id => id !== context.actorId) }, effects: [] };
-      if (command.type === 'schedule') return { ok: true, state: { ...state, decision: command.id }, effects: [{ type: 'schedule', decisionId: command.id, deadline: command.deadline }] };
-      if (command.type === 'cancel') return { ok: true, state, effects: [{ type: 'cancel', decisionId: command.id }] };
-      if (command.type === 'invalid-alarm') return { ok: true, state: { ...state, count: 999 }, effects: [{ type: 'schedule', decisionId: 'invalid', deadline: NaN }] };
+      if (command.type === 'schedule') return { ok: true, state: { ...state, decision: command.id }, effects: [{ type: 'schedule', id: command.id, deadline: command.deadline }] };
+      if (command.type === 'cancel') return { ok: true, state, effects: [{ type: 'cancel', id: command.id }] };
+      if (command.type === 'invalid-alarm') return { ok: true, state: { ...state, count: 999 }, effects: [{ type: 'schedule', id: 'invalid', deadline: NaN }] };
       if (command.type === 'projection-error') return { ok: true, state: { ...state, count: -1 }, effects: [{ type: 'throw' }] };
       return { ok: true, state: { ...state, count: state.count + (command.type === 'trusted' ? command.amount : 1) },
         effects: command.type === 'external' ? [{ type: 'external' }] : command.type === 'throw-effect' ? [{ type: 'throw' }, { type: 'external' }] : [] };
@@ -46,8 +47,8 @@ const adapter: GameAdapter<Env, Types> = {
     return input.type === 'increment' || input.type === 'leave' ? { type: input.type } : null;
   } },
   canConnect: (state, actorId) => state.members.includes(actorId),
-  timeout: { effect: effect => effect.type === 'schedule' || effect.type === 'cancel' ? effect : null,
-    command: id => ({ type: 'timeout', id }) },
+  scheduler: { effect: effect => effect.type === 'schedule' || effect.type === 'cancel' ? effect : null,
+    command: id => ({ type: 'scheduled', id }) },
   async executeEffect(effect) {
     if (effect.type === 'throw') throw new Error('secret effect failure');
     if (effect.type === 'external') {
@@ -62,12 +63,12 @@ const adapter: GameAdapter<Env, Types> = {
 export class TestRoom extends SessionRuntime<Env, Types> {
   protected readonly adapter = adapter;
   // 以下はテスト専用。配布runtimeに状態取得・Alarm強制起動の公開APIはない。
-  async inspect() { return { state: await this.ctx.storage.get('game-state'), reservation: await this.ctx.storage.get('decision-timeout'), alarm: await this.ctx.storage.getAlarm(), errors: errors.filter(e => e.roomId === this.ctx.id.toString()).map(e => e.phase), entered }; }
+  async inspect() { return { state: await this.ctx.storage.get('game-state'), reservations: await this.ctx.storage.get('scheduled-events'), alarm: await this.ctx.storage.getAlarm(), errors: errors.filter(e => e.roomId === this.ctx.id.toString()).map(e => e.phase), entered }; }
   async releaseEffect() { release?.(); }
   async fireAlarm() { await this.alarm(); }
-  async expireReservation() {
-    const reservation = await this.ctx.storage.get<{ decisionId: string; deadline: number }>('decision-timeout');
-    await this.ctx.storage.put('decision-timeout', { ...reservation, deadline: 0 });
+  async expireReservations() {
+    const reservations = await this.ctx.storage.get<{ id: string; deadline: number }[]>('scheduled-events') ?? [];
+    await this.ctx.storage.put('scheduled-events', reservations.map(reservation => ({ ...reservation, deadline: 0 })));
   }
 }
 export default {

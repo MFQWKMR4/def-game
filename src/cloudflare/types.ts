@@ -27,10 +27,10 @@ export type CreateRoomResult = { readonly ok: true; readonly roomId: string }
 export type GetViewResult<View> = { readonly ok: true; readonly view: View }
   | { readonly ok: false; readonly error: RuntimeError };
 
-/** 状態と一緒に確定する、1つの現在decisionに対する予約・解除。 */
-export type TimeoutEffect =
-  | { readonly type: "schedule"; readonly decisionId: string; readonly deadline: number }
-  | { readonly type: "cancel"; readonly decisionId: string };
+/** 状態と一緒に確定する、論理的な予定イベントの予約・解除。 */
+export type ScheduledEffect =
+  | { readonly type: "schedule"; readonly id: string; readonly deadline: number }
+  | { readonly type: "cancel"; readonly id: string };
 
 /** 失敗した区間を通知する。秘密の状態・Command・Effectを自動ログに含めない。 */
 export interface RuntimeFailure {
@@ -47,9 +47,9 @@ export interface GameAdapter<Env, T extends GameTypes> {
     readonly parseCommand: (input: unknown) => T["actorCommand"] | null;
   };
   readonly canConnect: (state: T["state"], actorId: string) => boolean;
-  readonly timeout?: {
-    readonly effect: (effect: T["effect"]) => TimeoutEffect | null;
-    readonly command: (decisionId: string) => T["systemCommand"];
+  readonly scheduler?: {
+    readonly effect: (effect: T["effect"]) => ScheduledEffect | null;
+    readonly command: (id: string) => T["systemCommand"];
   };
   /** 保存後のbest-effort処理。結果はruntimeがSystem Commandとして再度dispatchする。 */
   readonly executeEffect?: (effect: T["effect"], context: { readonly env: Env; readonly roomId: string })

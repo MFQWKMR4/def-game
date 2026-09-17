@@ -62,9 +62,9 @@ export interface GameAdapter<Env, T extends GameTypes> {
     readonly parseCommand: (input: unknown) => T["actorCommand"] | null;
   };
   readonly canConnect: (state: T["state"], actorId: string) => boolean;
-  readonly timeout?: {
-    readonly effect: (effect: T["effect"]) => TimeoutEffect | null;
-    readonly command: (decisionId: string) => T["systemCommand"];
+  readonly scheduler?: {
+    readonly effect: (effect: T["effect"]) => ScheduledEffect | null;
+    readonly command: (id: string) => T["systemCommand"];
   };
   /** 保存後のbest-effort処理。結果はruntimeがSystem Commandとして再度dispatchする。 */
   readonly executeEffect?: (effect: T["effect"], context: { readonly env: Env; readonly roomId: string })
@@ -79,7 +79,7 @@ export interface GameAdapter<Env, T extends GameTypes> {
 | `game` | 純粋な初期状態生成・ルール・View生成を提供 | 必須 |
 | `webSocket.parseCommand` | クライアントが指定してよい入力をCommandへ変換 | 必須 |
 | `canConnect` | Actorの接続とView配信を許可するか判断 | 必須 |
-| `timeout` | ゲームの期限処理をCloudflare Alarmにつなぐ | 期限処理を使う場合 |
+| `scheduler` | 論理的な予定イベントをCloudflare Alarmにつなぐ | 予定イベントを使う場合 |
 | `executeEffect` | Alarm以外のEffectを実行し、必要なら結果を返す | 外部Effectを出す場合 |
 | `onError` | runtimeの診断情報を受け取る | 任意 |
 
@@ -222,36 +222,46 @@ HTTPから`dispatchActor`へ渡したCommandには、このWS parserは適用さ
 falseなら接続開始は403、WS Commandは`NotRoomMember`として拒否し、配信対象なら接続を閉じます。
 HTTP／SystemのCommand認可には使われないため、`handleCommand`の検証は必須です。
 
-### timeout.effect / timeout.command
+### scheduler.effect / scheduler.command
 
 ```ts
-timeout?: {
-  effect: (effect: T['effect']) => TimeoutEffect | null;
-  command: (decisionId: string) => T['systemCommand'];
+scheduler?: {
+  effect: (effect: T['effect']) => ScheduledEffect | null;
+  command: (id: string) => T['systemCommand'];
 };
 
-type TimeoutEffect =
-  | { readonly type: 'schedule'; readonly decisionId: string; readonly deadline: number }
-  | { readonly type: 'cancel'; readonly decisionId: string };
+type ScheduledEffect =
+  | { readonly type: 'schedule'; readonly id: string; readonly deadline: number }
+  | { readonly type: 'cancel'; readonly id: string };
 ```
 
-**目的:** ゲームが返すEffectを、状態と一緒に保存するAlarm予約へ変換します。
-`effect`は成功した遷移の各Effectに対して呼ばれます。Alarm用なら上記の形に変換し、外部Effectなら`null`を返します。
-変換したAlarm用Effectは`executeEffect`へは渡されません。
+**目的:** ゲームが返すEffectを、状態と一緒に保存する論理的な予定イベントへ変換します。
+`effect`は成功した遷移の各Effectに対して呼ばれます。予定イベント用なら上記の形に変換し、外部Effectなら`null`を返します。
+変換したEffectは`executeEffect`へは渡されません。
 
 | 戻り値 | runtimeの動作 |
 | --- | --- |
-| schedule | 現在予約を置き換え、State・予約・Alarmを同じtransactionで保存 |
-| cancel | 現在のdecisionIdと一致するときだけ予約・Alarmを削除 |
+| schedule | 同じidの予約を追加または置き換え、最も早い期限を物理Alarmへ設定 |
+| cancel | 同じidの予約を削除し、残る最も早い期限へ物理Alarmを再設定 |
 | null | 保存後に外部Effect handlerへ渡す |
 
-1ルームの予約は1つです。`decisionId`は空でない文字列、`deadline`は有限のUnix時刻ミリ秒を指定します。
-複数のAlarm用Effectは配列順に適用します。
+1ルームに複数の論理予約を保持できます。`id`は空でない文字列、`deadline`は有限のUnix時刻ミリ秒を指定します。
+予約はゲームStateとは別の`scheduled-events`へ永続化されます。Cloudflareの物理Alarmは1つだけで、常に最も早い論理予約の期限を指します。
+予約がなくなれば物理Alarmも削除されます。複数のscheduler Effectは配列順に適用します。
 
-`command`は期限に達した予約からSystem Commandを作ります。必要なら`now: Date.now()`等を追加してください。
-実行時にゲーム側でも現在のdecision IDと状態を検証します。
-早すぎる発火は再予約し、ゲームによる拒否・保存失敗では予約を消費せず例外を返します。
+`command`は期限に達した論理予約の`id`からSystem Commandを作ります。必要なら`now: Date.now()`等を追加してください。
+runtimeはイベント名の意味を解釈しません。decision timeout、inactivity、reconnect grace period等の名前と処理はアプリが決めます。
+decision timeoutもschedulerの通常の利用例であり、runtime固有の特別な予約ではありません。
+
+Alarm発火時は、期限に達した最も早い予約を1件だけCommandへ変換し、通常のdispatcherで処理します。
+成功後に予約を読み直し、別の予約も期限に達していれば最新Stateに対して次のCommandを処理します。
+これにより、先のCommandが後続予約を取り消した場合、その予約は古いStateから作ったCommandとして実行されません。
+早すぎる発火は最も早い期限へ再設定し、ゲームによる拒否・保存失敗では予約を消費せず例外を返します。
 Alarmの予約と、将来の発火・再試行は別の実行です。一度だけ届く前提にしないでください。
+
+セッション削除はschedulerとは別のruntime lifecycle操作です。予定イベントをきっかけに削除する場合も、
+まずSystem Commandとしてゲームが最新Stateで削除の妥当性を判断し、その結果をruntimeが`storage.deleteAll()`等へ接続する境界にします。
+イベントID自体へ削除の意味を持たせたり、ゲームからDurable Object Storageを直接操作したりしません。
 
 ### executeEffect
 

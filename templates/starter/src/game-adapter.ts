@@ -17,9 +17,11 @@ export const adapter: GameAdapter<Env, Types> = {
     return null;
   } },
   canConnect: (state, actorId) => state.players.some(p => p.actorId === actorId),
-  timeout: {
-    effect: effect => effect.type === 'schedule' || effect.type === 'cancel' ? effect : null,
-    command: decisionId => ({ type: 'decision-timeout', decisionId, now: Date.now() }),
+  scheduler: {
+    effect: effect => effect.type === 'schedule'
+      ? { type: 'schedule', id: `decision:${effect.decisionId}`, deadline: effect.deadline }
+      : effect.type === 'cancel' ? { type: 'cancel', id: `decision:${effect.decisionId}` } : null,
+    command: id => ({ type: 'decision-timeout', decisionId: id.slice('decision:'.length), now: Date.now() }),
   },
   async executeEffect(effect, { roomId }) {
     if (effect.type === 'finished') console.info('Game finished', { roomId });

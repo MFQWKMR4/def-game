@@ -1,11 +1,11 @@
 import { DurableObject } from "cloudflare:workers";
 import type { CommandContext } from "../game-definition.js";
 import { failure, isRecord, parseCommandRequest } from "./protocol.js";
-import type { CommandResult, CreateRoomResult, GetViewResult, GameAdapter, GameTypes, RuntimeFailure, ServerMessage, TimeoutEffect, VerifiedActor } from "./types.js";
+import type { CommandResult, CreateRoomResult, GetViewResult, GameAdapter, GameTypes, RuntimeFailure, ScheduledEffect, ServerMessage, VerifiedActor } from "./types.js";
 
 const STATE_KEY = "game-state";
-const TIMEOUT_KEY = "decision-timeout";
-type Reservation = { decisionId: string; deadline: number };
+const SCHEDULED_EVENTS_KEY = "scheduled-events";
+type ScheduledReservation = { id: string; deadline: number };
 
 /**
  * 1ルームを動かすCloudflare専用runtime。アプリはadapterだけを接続した派生クラスをexportする。
@@ -61,22 +61,26 @@ export abstract class SessionRuntime<Env, T extends GameTypes> extends DurableOb
   async #dispatchCommand(
     command: T["actorCommand"] | T["systemCommand"],
     context: CommandContext<string>,
-    options: { fromSocket?: boolean; alarm?: boolean } = {},
+    options: { fromSocket?: boolean; alarm?: boolean; onScheduledProcessed?: () => void } = {},
   ): Promise<CommandResult<T["error"]>> {
     let effects: readonly T["effect"][] = [];
     const outcome = await this.ctx.blockConcurrencyWhile(async (): Promise<CommandResult<T["error"]>> => {
       try {
         let consumed: string | undefined;
         if (options.alarm) {
-          const reservation = await this.ctx.storage.get<Reservation>(TIMEOUT_KEY);
-          if (!reservation) return { ok: true };
+          const reservations = await this.#reservations(this.ctx.storage);
+          const reservation = this.#earliest(reservations);
+          if (!reservation) {
+            await this.ctx.storage.deleteAlarm();
+            return { ok: true };
+          }
           if (Date.now() < reservation.deadline) {
             await this.ctx.storage.setAlarm(reservation.deadline);
             return { ok: true };
           }
-          if (!this.adapter.timeout) throw new Error("Timeout adapter missing");
-          command = this.adapter.timeout.command(reservation.decisionId);
-          consumed = reservation.decisionId;
+          if (!this.adapter.scheduler) throw new Error("Scheduler adapter missing");
+          command = this.adapter.scheduler.command(reservation.id);
+          consumed = reservation.id;
         }
         const state = await this.ctx.storage.get<T["state"]>(STATE_KEY);
         if (state === undefined) return failure("RoomNotFound");
@@ -87,38 +91,40 @@ export abstract class SessionRuntime<Env, T extends GameTypes> extends DurableOb
         if (!result.ok) return { ok: false, error: { kind: "game", detail: result.error } };
         if (result.state === undefined) throw new Error("State must be persistable");
         const external: T["effect"][] = [];
-        const alarms: TimeoutEffect[] = [];
+        const scheduled: ScheduledEffect[] = [];
         for (const effect of result.effects) {
-          const alarm = this.adapter.timeout?.effect(effect) ?? null;
-          if (alarm === null) external.push(effect);
+          const scheduledEffect = this.adapter.scheduler?.effect(effect) ?? null;
+          if (scheduledEffect === null) external.push(effect);
           else {
-            if (!alarm.decisionId || (alarm.type !== "schedule" && alarm.type !== "cancel")
-              || (alarm.type === "schedule" && !Number.isFinite(alarm.deadline))) throw new Error("Invalid alarm effect");
-            alarms.push(alarm);
+            if (!scheduledEffect.id || (scheduledEffect.type !== "schedule" && scheduledEffect.type !== "cancel")
+              || (scheduledEffect.type === "schedule" && !Number.isFinite(scheduledEffect.deadline))) {
+              throw new Error("Invalid scheduler effect");
+            }
+            scheduled.push(scheduledEffect);
           }
         }
         await this.ctx.storage.transaction(async txn => {
           await txn.put(STATE_KEY, result.state);
-          if (consumed !== undefined) {
-            const current = await txn.get<Reservation>(TIMEOUT_KEY);
-            if (current?.decisionId === consumed) {
-              await txn.delete(TIMEOUT_KEY);
+          if (consumed !== undefined || scheduled.length > 0) {
+            let reservations = await this.#reservations(txn);
+            if (consumed !== undefined) reservations = reservations.filter(item => item.id !== consumed);
+            for (const scheduledEffect of scheduled) {
+              reservations = reservations.filter(item => item.id !== scheduledEffect.id);
+              if (scheduledEffect.type === "schedule") {
+                reservations.push({ id: scheduledEffect.id, deadline: scheduledEffect.deadline });
+              }
+            }
+            const earliest = this.#earliest(reservations);
+            if (earliest) {
+              await txn.put(SCHEDULED_EVENTS_KEY, reservations);
+              await txn.setAlarm(earliest.deadline);
+            } else {
+              await txn.delete(SCHEDULED_EVENTS_KEY);
               await txn.deleteAlarm();
             }
           }
-          for (const alarm of alarms) {
-            if (alarm.type === "schedule") {
-              await txn.put(TIMEOUT_KEY, { decisionId: alarm.decisionId, deadline: alarm.deadline });
-              await txn.setAlarm(alarm.deadline);
-            } else {
-              const current = await txn.get<Reservation>(TIMEOUT_KEY);
-              if (current?.decisionId === alarm.decisionId) {
-                await txn.delete(TIMEOUT_KEY);
-                await txn.deleteAlarm();
-              }
-            }
-          }
         });
+        if (consumed !== undefined) options.onScheduledProcessed?.();
         // 保存後の配信失敗で、確定したCommandを失敗に戻さない。
         effects = external;
         this.#broadcast(result.state);
@@ -135,8 +141,29 @@ export abstract class SessionRuntime<Env, T extends GameTypes> extends DurableOb
 
   /** Alarm失敗は例外としてCloudflareの有限回リトライへ返す。 */
   async alarm(): Promise<void> {
-    const result = await this.#dispatchCommand(undefined as T["systemCommand"], { origin: "system" }, { alarm: true });
-    if (!result.ok) throw new Error("Timeout command failed");
+    while (true) {
+      let processed = false;
+      const result = await this.#dispatchCommand(undefined as T["systemCommand"], { origin: "system" },
+        { alarm: true, onScheduledProcessed: () => { processed = true; } });
+      if (!result.ok) throw new Error("Scheduled command failed");
+      if (!processed) return;
+    }
+  }
+
+  async #reservations(storage: Pick<DurableObjectStorage, "get">): Promise<ScheduledReservation[]> {
+    const reservations = await storage.get<unknown>(SCHEDULED_EVENTS_KEY);
+    if (reservations === undefined) return [];
+    if (!Array.isArray(reservations) || reservations.some(item => !isRecord(item)
+      || typeof item.id !== "string" || item.id.length === 0
+      || typeof item.deadline !== "number" || !Number.isFinite(item.deadline))) {
+      throw new Error("Invalid scheduled reservations");
+    }
+    return reservations as ScheduledReservation[];
+  }
+
+  #earliest(reservations: readonly ScheduledReservation[]): ScheduledReservation | undefined {
+    return reservations.reduce<ScheduledReservation | undefined>((earliest, item) =>
+      !earliest || item.deadline < earliest.deadline ? item : earliest, undefined);
   }
 
   /** 認証済みWorkerからだけ呼ぶ内部WS入口。一般HTTP Commandの転送は受け付けない。 */
