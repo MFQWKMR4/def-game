@@ -1,7 +1,7 @@
 import { DurableObject } from "cloudflare:workers";
 import type { CommandContext } from "../game-definition.js";
 import { failure, isRecord, parseCommandRequest } from "./protocol.js";
-import type { CommandResult, CreateRoomResult, GetViewResult, GameAdapter, GameTypes, RuntimeFailure, ScheduledEffect, ServerMessage, VerifiedActor } from "./types.js";
+import type { CommandResult, CreateRoomResult, GetViewResult, GameAdapter, GameTypes, RuntimeEffect, RuntimeFailure, ServerMessage, VerifiedActor } from "./types.js";
 
 const STATE_KEY = "game-state";
 const SCHEDULED_EVENTS_KEY = "scheduled-events";
@@ -61,9 +61,16 @@ export abstract class SessionRuntime<Env, T extends GameTypes> extends DurableOb
   async #dispatchCommand(
     command: T["actorCommand"] | T["systemCommand"],
     context: CommandContext<string>,
-    options: { fromSocket?: boolean; alarm?: boolean; onScheduledProcessed?: () => void } = {},
+    options: {
+      fromSocket?: boolean;
+      alarm?: boolean;
+      deferSocketClose?: boolean;
+      onScheduledProcessed?: () => void;
+      onSessionDeleted?: () => void;
+    } = {},
   ): Promise<CommandResult<T["error"]>> {
     let effects: readonly T["effect"][] = [];
+    let deleted = false;
     const outcome = await this.ctx.blockConcurrencyWhile(async (): Promise<CommandResult<T["error"]>> => {
       try {
         let consumed: string | undefined;
@@ -78,8 +85,8 @@ export abstract class SessionRuntime<Env, T extends GameTypes> extends DurableOb
             await this.ctx.storage.setAlarm(reservation.deadline);
             return { ok: true };
           }
-          if (!this.adapter.scheduler) throw new Error("Scheduler adapter missing");
-          command = this.adapter.scheduler.command(reservation.id);
+          if (!this.adapter.runtime?.scheduler) throw new Error("Scheduler adapter missing");
+          command = this.adapter.runtime.scheduler.command(reservation.id);
           consumed = reservation.id;
         }
         const state = await this.ctx.storage.get<T["state"]>(STATE_KEY);
@@ -91,49 +98,66 @@ export abstract class SessionRuntime<Env, T extends GameTypes> extends DurableOb
         if (!result.ok) return { ok: false, error: { kind: "game", detail: result.error } };
         if (result.state === undefined) throw new Error("State must be persistable");
         const external: T["effect"][] = [];
-        const scheduled: ScheduledEffect[] = [];
+        const runtimeEffects: RuntimeEffect[] = [];
         for (const effect of result.effects) {
-          const scheduledEffect = this.adapter.scheduler?.effect(effect) ?? null;
-          if (scheduledEffect === null) external.push(effect);
+          const runtimeEffect: unknown = this.adapter.runtime?.effect(effect) ?? null;
+          if (runtimeEffect === null) external.push(effect);
           else {
-            if (!scheduledEffect.id || (scheduledEffect.type !== "schedule" && scheduledEffect.type !== "cancel")
-              || (scheduledEffect.type === "schedule" && !Number.isFinite(scheduledEffect.deadline))) {
-              throw new Error("Invalid scheduler effect");
+            if (!isRecord(runtimeEffect)
+              || (runtimeEffect.type !== "schedule" && runtimeEffect.type !== "cancel"
+                && runtimeEffect.type !== "delete-session")
+              || ((runtimeEffect.type === "schedule" || runtimeEffect.type === "cancel")
+                && (typeof runtimeEffect.id !== "string" || runtimeEffect.id.length === 0))
+              || (runtimeEffect.type === "schedule"
+                && (typeof runtimeEffect.deadline !== "number" || !Number.isFinite(runtimeEffect.deadline)))) {
+              throw new Error("Invalid runtime effect");
             }
-            scheduled.push(scheduledEffect);
+            runtimeEffects.push(runtimeEffect as RuntimeEffect);
           }
         }
-        await this.ctx.storage.transaction(async txn => {
-          await txn.put(STATE_KEY, result.state);
-          if (consumed !== undefined || scheduled.length > 0) {
-            let reservations = await this.#reservations(txn);
-            if (consumed !== undefined) reservations = reservations.filter(item => item.id !== consumed);
-            for (const scheduledEffect of scheduled) {
-              reservations = reservations.filter(item => item.id !== scheduledEffect.id);
-              if (scheduledEffect.type === "schedule") {
-                reservations.push({ id: scheduledEffect.id, deadline: scheduledEffect.deadline });
+        const deleteSession = runtimeEffects.some(effect => effect.type === "delete-session");
+        if (deleteSession) {
+          await this.ctx.storage.deleteAll();
+          deleted = true;
+        } else {
+          const scheduled = runtimeEffects.filter((effect): effect is Extract<RuntimeEffect,
+            { readonly type: "schedule" | "cancel" }> => effect.type !== "delete-session");
+          await this.ctx.storage.transaction(async txn => {
+            await txn.put(STATE_KEY, result.state);
+            if (consumed !== undefined || scheduled.length > 0) {
+              let reservations = await this.#reservations(txn);
+              if (consumed !== undefined) reservations = reservations.filter(item => item.id !== consumed);
+              for (const scheduledEffect of scheduled) {
+                reservations = reservations.filter(item => item.id !== scheduledEffect.id);
+                if (scheduledEffect.type === "schedule") {
+                  reservations.push({ id: scheduledEffect.id, deadline: scheduledEffect.deadline });
+                }
+              }
+              const earliest = this.#earliest(reservations);
+              if (earliest) {
+                await txn.put(SCHEDULED_EVENTS_KEY, reservations);
+                await txn.setAlarm(earliest.deadline);
+              } else {
+                await txn.delete(SCHEDULED_EVENTS_KEY);
+                await txn.deleteAlarm();
               }
             }
-            const earliest = this.#earliest(reservations);
-            if (earliest) {
-              await txn.put(SCHEDULED_EVENTS_KEY, reservations);
-              await txn.setAlarm(earliest.deadline);
-            } else {
-              await txn.delete(SCHEDULED_EVENTS_KEY);
-              await txn.deleteAlarm();
-            }
-          }
-        });
+          });
+        }
         if (consumed !== undefined) options.onScheduledProcessed?.();
         // 保存後の配信失敗で、確定したCommandを失敗に戻さない。
         effects = external;
-        this.#broadcast(result.state);
+        if (!deleted) this.#broadcast(result.state);
         return { ok: true };
       } catch {
         this.#report("command");
         return failure("InternalError");
       }
     });
+    if (deleted) {
+      options.onSessionDeleted?.();
+      if (!options.deferSocketClose) this.#closeAll();
+    }
     // 排他区間を出てから呼ぶ。外部取得中も次のCommandを受け付ける。
     if (effects.length) this.#deliver(effects);
     return outcome;
@@ -202,9 +226,12 @@ export abstract class SessionRuntime<Env, T extends GameTypes> extends DurableOb
       return;
     }
     const actorId = this.#actor(socket);
+    let deleted = false;
     const result = actorId === null ? failure("NotRoomMember")
-      : await this.#dispatchCommand(command, { origin: "actor", actorId }, { fromSocket: true });
+      : await this.#dispatchCommand(command, { origin: "actor", actorId },
+        { fromSocket: true, deferSocketClose: true, onSessionDeleted: () => { deleted = true; } });
     this.#send(socket, { type: "GameCommandResponse", requestId: request.requestId, ...result });
+    if (deleted) this.#closeAll();
   }
 
   /** 保存済みの状態は変更せず、接続ごとに公開可能なViewだけ配る。 */
@@ -250,6 +277,11 @@ export abstract class SessionRuntime<Env, T extends GameTypes> extends DurableOb
   }
   #close(socket: WebSocket, code = 1011): void {
     try { socket.close(code, "Connection closed"); } catch { /* 既に切断済み */ }
+  }
+  #closeAll(): void {
+    try {
+      for (const socket of this.ctx.getWebSockets()) this.#close(socket, 1000);
+    } catch { this.#report("connection"); }
   }
   #report(phase: RuntimeFailure["phase"]): void {
     const failure = { phase, roomId: this.ctx.id.toString() };

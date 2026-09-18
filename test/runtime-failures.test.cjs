@@ -17,6 +17,7 @@ async function harness() {
     get: async key => structuredClone(values.get(key)),
     setAlarm: async value => { alarm = value; },
     deleteAlarm: async () => { alarm = null; },
+    deleteAll: async () => { values.clear(); alarm = null; },
     transaction: async fn => {
       const next = structuredClone(values); let nextAlarm = alarm;
       const txn = {
@@ -42,8 +43,10 @@ async function harness() {
       project: state => state,
     },
     canConnect: () => true, webSocket: { parseCommand: x => x },
-    scheduler: { effect: e => e.type === 'schedule' || e.type === 'cancel' ? e : null,
-      command: id => id === 'reject' ? { type: 'reject' } : { type: 'scheduled', id } },
+    runtime: {
+      effect: e => e.type === 'schedule' || e.type === 'cancel' ? e : null,
+      scheduler: { command: id => id === 'reject' ? { type: 'reject' } : { type: 'scheduled', id } },
+    },
     executeEffect: async () => { effects++; return { command: { type: 'reject' } }; },
     onError: failure => { failures.push(failure.phase); },
   };
