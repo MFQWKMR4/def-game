@@ -86,16 +86,27 @@ test('effects run outside lock, feedback uses latest state and failures preserve
   assert.ok((await stub.inspect()).errors.includes('effect'));
 });
 
-test('alarms commit with state, stale wakeups and cancellations do not consume current reservation', async () => {
-  const stub = await setup('alarm'); const deadline = Date.now() + 60000;
-  assert.equal((await post('alarm', { type: 'schedule', id: 'new', deadline })).ok, true);
-  let snapshot = await stub.inspect(); assert.equal(snapshot.state.decision, 'new'); assert.equal(snapshot.alarm, deadline);
+test('scheduler persists multiple reservations and projects only the earliest physical alarm', async () => {
+  const stub = await setup('alarm');
+  const early = Date.now() + 60000, late = early + 60000, replacement = early - 10000;
+  assert.equal((await post('alarm', { type: 'schedule', id: 'late', deadline: late })).ok, true);
+  assert.equal((await post('alarm', { type: 'schedule', id: 'early', deadline: early })).ok, true);
+  let snapshot = await stub.inspect();
+  assert.deepEqual(snapshot.reservations, [{ id: 'late', deadline: late }, { id: 'early', deadline: early }]);
+  assert.equal(snapshot.alarm, early);
   await stub.fireAlarm(); assert.equal((await stub.inspect()).state.count, 0);
-  await post('alarm', { type: 'cancel', id: 'old' }); assert.equal((await stub.inspect()).alarm, deadline);
+  await post('alarm', { type: 'schedule', id: 'late', deadline: replacement });
+  snapshot = await stub.inspect();
+  assert.deepEqual(snapshot.reservations, [{ id: 'early', deadline: early }, { id: 'late', deadline: replacement }]);
+  assert.equal(snapshot.alarm, replacement);
+  await post('alarm', { type: 'cancel', id: 'old' }); assert.equal((await stub.inspect()).alarm, replacement);
+  await post('alarm', { type: 'cancel', id: 'late' }); assert.equal((await stub.inspect()).alarm, early);
   assert.equal((await post('alarm', { type: 'invalid-alarm' })).ok, false);
-  snapshot = await stub.inspect(); assert.equal(snapshot.state.count, 0); assert.equal(snapshot.reservation.decisionId, 'new');
-  await stub.expireReservation(); await stub.fireAlarm();
-  snapshot = await stub.inspect(); assert.equal(snapshot.state.count, 10); assert.equal(snapshot.reservation, undefined); assert.equal(snapshot.alarm, null);
+  snapshot = await stub.inspect(); assert.equal(snapshot.state.count, 0);
+  assert.deepEqual(snapshot.reservations, [{ id: 'early', deadline: early }]);
+  await stub.expireReservations(); await stub.fireAlarm();
+  snapshot = await stub.inspect(); assert.equal(snapshot.state.count, 10);
+  assert.deepEqual(snapshot.state.fired, ['early']); assert.equal(snapshot.reservations, undefined); assert.equal(snapshot.alarm, null);
 });
 
 test('projection failure cannot turn committed success into failure or suppress external effects', async () => {
@@ -120,7 +131,7 @@ test('getView projects for non-members without connecting or changing state, rep
   assert.equal(after.state.count, before.state.count);
   assert.equal(after.state.members.length, 0);
   assert.equal(after.alarm, before.alarm);
-  assert.equal(after.reservation, before.reservation);
+  assert.equal(after.reservations, before.reservations);
   assert.equal((await stub.getView({ actorId: '' })).error.code, 'InvalidRequest');
   await stub.dispatchActor({ actorId: 'alice' }, { type: 'join' });
   await stub.dispatchActor({ actorId: 'alice' }, { type: 'increment' });

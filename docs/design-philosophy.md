@@ -16,14 +16,14 @@ flowchart TB
   subgraph App["初期生成するアプリ所有コード：編集・置き換え可能"]
     Entry["Worker入口：HTTP／WS接続ルート<br/>認証・公開ルームIDの解決"]
     API["HTTP処理・外部情報の取得"]
-    Adapter["adapter：入力parser・接続可否・Alarm変換"]
+    Adapter["adapter：入力parser・接続可否・scheduler変換"]
     Handler["Effect handler"]
     Game["Game Definition<br/>初期状態・ルール・Actor別View"]
   end
   subgraph Lib["DefGameライブラリ：SessionRuntimeが提供"]
     WS["標準WS管理<br/>接続とActorの紐付け・Hibernation"]
     Runtime["共通dispatcher<br/>状態取得・Command実行・保存"]
-    Alarm["Alarm予約・発火時の処理"]
+    Alarm["永続scheduler<br/>論理予約・Alarm発火"]
   end
   External["外部サービス"]
   Client -->|HTTP・WS接続開始| Entry
@@ -34,7 +34,7 @@ flowchart TB
   Runtime -->|handleCommand・projectを呼ぶ| Game
   Game -->|次状態・Effect・View| Runtime
   Adapter -.->|入力・接続条件を提供| WS
-  Adapter -.->|Alarm変換を提供| Alarm
+  Adapter -.->|予定イベント変換を提供| Alarm
   Runtime -->|状態と一緒に予約| Alarm
   Alarm -->|System Command| Runtime
   Runtime -->|保存後のActor別View| WS
@@ -52,10 +52,10 @@ WS接続後のメッセージはライブラリのWS処理へ届き、毎回Work
 
 ## 1. init-workerで開発を始める
 
-Node.js 22以降で、次を実行します。以下は`6.1.0`の利用手順です。
+Node.js 22以降で、次を実行します。以下は`6.2.0`の利用手順です。
 
 ```sh
-npx def-game@6.1.0 init-worker --directory my-game --name my-game
+npx def-game@6.2.0 init-worker --directory my-game --name my-game
 cd my-game
 npm install
 npm run dev
@@ -195,12 +195,12 @@ webhookやマッチング処理から入力する場合は、アプリで認証�
 | `game` | 必須 | 作成したGame Definitionを渡す |
 | `webSocket.parseCommand` | 必須 | unknownの入力を許可したActor Commandへ変換。拒否はnull |
 | `canConnect` | 必須 | StateとActor IDから接続・View配信の可否を判定 |
-| `timeout.effect`／`timeout.command` | 期限処理を使う場合 | Alarm用Effectの識別と、発火時のSystem Command作成 |
+| `scheduler.effect`／`scheduler.command` | 予定イベントを使う場合 | Effectから論理予約への変換と、発火時のSystem Command作成 |
 | `executeEffect` | 外部Effectを出す場合 | 外部処理と、必要なら結果Commandの返却 |
 | `onError` | 独自の診断が必要な場合 | 失敗した区間の記録・通知 |
 
 `executeEffect`は型上は省略可能ですが、外部Effectを出すゲームでは対応するhandlerが必要です。
-Alarm用Effectはruntimeが状態と一緒に保存します。外部handlerから直接setAlarmする構成にはしません。
+scheduler用Effectはruntimeが状態と一緒に保存します。外部handlerから直接setAlarmする構成にはしません。
 
 `src/room.ts`では、そのadapterを共通runtimeへ接続しています。
 
@@ -266,7 +266,7 @@ flowchart LR
   G -->|拒否| E["状態を変えずエラーを返す"]
 ```
 
-HTTP、WS、timeout、外部処理の完了がそれぞれ直接状態を書き換えると、どこにルールがあるのか追いにくくなります。
+HTTP、WS、予定イベント、外部処理の完了がそれぞれ直接状態を書き換えると、どこにルールがあるのか追いにくくなります。
 DefGameでは初期状態の生成後、すべてのゲーム操作をCommandとして`handleCommand`へ集めます。
 同じ操作なら通信経路によらず同じルールを通り、変更理由をCommandとその処理から読めます。
 これは状態遷移の構造を揃える仕組みであり、Command履歴の永続保存や自動リプレイを提供するものではありません。
@@ -317,7 +317,7 @@ sequenceDiagram
 ただし、外部Effectはbest effortです。状態保存後、handlerが起動する前に停止すれば依頼が失われる可能性があります。
 外部処理の完了から結果Commandの保存までにも同様の隙間があります。
 ライブラリは永続outboxや自動再試行を提供せず、Effect失敗で保存済み状態を取り消しません。
-結果が必須の機能では、アプリ側の復旧方法やゲーム側のtimeoutを設計してください。
+結果が必須の機能では、アプリ側の復旧方法やゲーム側の予定イベントを設計してください。
 
 ### 保存・Alarm・配信の手順を共通化する
 
@@ -325,36 +325,40 @@ sequenceDiagram
 flowchart TB
   Input["プレイヤーの操作"] --> G["handleCommand"]
   G --> Wait["安定した入力待ち状態<br/>誰の入力・どのdecision IDを待つか"]
-  G --> Effect["Alarm用Effect<br/>decision ID・期限"]
+  G --> Effect["scheduler用Effect<br/>イベントID・期限"]
   subgraph TX["同じstorage transactionで確定"]
     State["入力待ち状態を保存"]
-    Reservation["予約情報とCloudflare Alarmを設定"]
+    Reservations["N個の論理予約を保存"]
+    Alarm["最も早い期限を<br/>1つの物理Alarmへ設定"]
+    Reservations -->|min(deadline)| Alarm
   end
   Wait --> State
-  Effect -->|adapterで識別| Reservation
+  Effect -->|adapterで識別| Reservations
   TX --> Saved["保存確定"]
   Saved --> View["View配信"]
   Saved --> Waiting["次の入力を待つ"]
   Waiting -->|期限前の操作| Next["Actor Command"]
-  Waiting -->|Cloudflare Alarm発火| Timeout["System Command<br/>decision IDを付ける"]
+  Waiting -->|Cloudflare Alarm発火| Scheduled["System Command<br/>イベントIDを付ける"]
   Next --> Check["同じhandleCommand<br/>現在の入力待ちに有効か検証"]
-  Timeout --> Check
+  Scheduled --> Check
   Check -->|有効| Transition["次の安定状態へ<br/>必要なら予約を取消・更新"]
   Check -->|古い入力等| Reject["現在状態を進めない"]
 ```
 
-手番や選択待ちに期限を付けるとき、ゲームは「期限に達したら何をするか」を実装します。
-予約の保存とCloudflareネイティブのAlarmへの接続はruntimeに任せられます。
-タイムアウトは任意の機能ですが、プレイヤーの離席や切断で進行が止まるゲームに役立ちます。
+手番や選択待ち、inactivity、再接続猶予などに期限を付けるとき、ゲームは「期限に達したら何をするか」を実装します。
+複数の論理予約の保存とCloudflareネイティブの1つのAlarmへの接続はruntimeに任せられます。
+runtimeはイベントIDの意味を解釈せず、最も早い期限だけを物理Alarmへ設定します。
 図のtransactionは保存処理だけを囲んでいます。将来の発火・Command実行や、取り消せないView配信は含みません。
 
-複数の入力が届いても、runtimeが状態取得から更新を直列化し、状態とAlarm予約を同じtransactionで保存します。
+複数の入力が届いても、runtimeが状態取得から更新を直列化し、状態と論理予約を同じtransactionで保存します。
 これにより、ゲームごとに同じ排他制御や保存手順を実装する負担を減らします。
 保存が確定してからViewを配信し、外部Effectは直列化区間を出て実行します。
 外部処理を待っている間にも次のCommandを処理し、結果が戻れば最新状態に対して検証します。
 
-Alarmの予約が状態と一緒に確定することと、将来のAlarm発火が一度だけ処理されることは別です。
-ゲーム側でもdecision IDと現在状態を確認し、古い入力を適用しないようにします。
+Alarm発火時は期限に達した予約を1件ずつ通常のCommandとして処理し、そのたびに最新のStateと予約を読み直します。
+先のCommandがゲームを終了して次の予約を取り消せば、その予約は処理されません。
+論理予約が状態と一緒に確定することと、将来のAlarm発火が一度だけ処理されることは別です。
+ゲーム側でもイベントIDと現在状態を確認し、古い入力を適用しないようにします。
 
 ### ゲームの参加状態を、通信の寿命から切り離す
 

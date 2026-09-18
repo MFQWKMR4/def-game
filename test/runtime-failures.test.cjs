@@ -16,6 +16,7 @@ async function harness() {
   const storage = {
     get: async key => structuredClone(values.get(key)),
     setAlarm: async value => { alarm = value; },
+    deleteAlarm: async () => { alarm = null; },
     transaction: async fn => {
       const next = structuredClone(values); let nextAlarm = alarm;
       const txn = {
@@ -34,13 +35,15 @@ async function harness() {
       handleCommand: (state, command) => {
         if (command.type === 'reject') return { ok: false, error: 'stale-result' };
         return { ok: true, state: { count: state.count + 1 }, effects: command.type === 'schedule'
-          ? [{ type: 'schedule', decisionId: 'd', deadline: Date.now() + 10000 }, { type: 'external' }]
+          ? [{ type: 'schedule', id: 'd', deadline: Date.now() + 10000 }, { type: 'external' }]
+          : command.type === 'scheduled' && command.id === 'cancel-next' ? [{ type: 'cancel', id: 'next' }]
           : command.type === 'feedback' ? [{ type: 'external' }] : [] };
       },
       project: state => state,
     },
     canConnect: () => true, webSocket: { parseCommand: x => x },
-    timeout: { effect: e => e.type === 'schedule' ? e : null, command: () => ({ type: 'reject' }) },
+    scheduler: { effect: e => e.type === 'schedule' || e.type === 'cancel' ? e : null,
+      command: id => id === 'reject' ? { type: 'reject' } : { type: 'scheduled', id } },
     executeEffect: async () => { effects++; return { command: { type: 'reject' } }; },
     onError: failure => { failures.push(failure.phase); },
   };
@@ -53,29 +56,52 @@ async function harness() {
     restart: () => { room = new Room(ctx, {}); return room; } };
 }
 
-test('alarm write failure rolls back state and reservation, does not deliver effects', async () => {
+test('alarm write failure rolls back state and scheduled events, does not deliver effects', async () => {
   const h = await harness(); await h.room.create(); h.failAlarm();
   assert.equal((await h.room.dispatchActor({ actorId: 'a' }, { type: 'schedule' })).ok, false);
   assert.deepEqual(await h.storage.get('game-state'), { count: 0 });
-  assert.equal(await h.storage.get('decision-timeout'), undefined);
+  assert.equal(await h.storage.get('scheduled-events'), undefined);
   assert.equal(h.alarm, null); assert.equal(h.effects, 0);
 });
 
-test('rejected Alarm preserves reservation and throws for platform retry; rejected feedback reports failure', async () => {
+test('rejected Alarm preserves scheduled event and throws for platform retry; rejected feedback reports failure', async () => {
   const h = await harness(); await h.room.create();
   await h.room.dispatchActor({ actorId: 'a' }, { type: 'schedule' });
   await Promise.all(h.pending);
   assert.ok(h.failures.includes('effect-feedback'));
   assert.deepEqual(await h.storage.get('game-state'), { count: 1 });
-  await h.storage.transaction(txn => txn.put('decision-timeout', { decisionId: 'd', deadline: 0 }));
-  await assert.rejects(() => h.room.alarm(), /Timeout command failed/);
-  assert.equal((await h.storage.get('decision-timeout')).decisionId, 'd');
+  await h.storage.transaction(txn => txn.put('scheduled-events', [{ id: 'reject', deadline: 0 }]));
+  await assert.rejects(() => h.room.alarm(), /Scheduled command failed/);
+  assert.deepEqual(await h.storage.get('scheduled-events'), [{ id: 'reject', deadline: 0 }]);
   assert.deepEqual(await h.storage.get('game-state'), { count: 1 });
 });
 
-test('new instance uses persisted state and socket attachment without constructor adapter access', async () => {
+test('due scheduled events use latest state and can cancel later due events', async () => {
   const h = await harness(); await h.room.create();
-  await h.room.dispatchActor({ actorId: 'a' }, { type: 'increment' });
+  await h.storage.transaction(async txn => {
+    await txn.put('scheduled-events', [{ id: 'first', deadline: 0 }, { id: 'second', deadline: 0 }]);
+    await txn.setAlarm(0);
+  });
+  await h.room.alarm();
+  assert.deepEqual(await h.storage.get('game-state'), { count: 2 });
+  assert.equal(await h.storage.get('scheduled-events'), undefined);
+  assert.equal(h.alarm, null);
+
+  await h.storage.transaction(async txn => {
+    await txn.put('scheduled-events', [{ id: 'cancel-next', deadline: 0 }, { id: 'next', deadline: 0 }]);
+    await txn.setAlarm(0);
+  });
+  await h.room.alarm();
+  assert.deepEqual(await h.storage.get('game-state'), { count: 3 });
+  assert.equal(await h.storage.get('scheduled-events'), undefined);
+  assert.equal(h.alarm, null);
+});
+
+test('new instance uses persisted state, scheduler, and socket attachment without constructor adapter access', async () => {
+  const h = await harness(); await h.room.create();
+  await h.room.dispatchActor({ actorId: 'a' }, { type: 'schedule' });
+  assert.deepEqual((await h.storage.get('scheduled-events')).map(({ id }) => id), ['d']);
+  assert.ok(h.alarm > Date.now());
   const messages = [];
   const socket = { deserializeAttachment: () => ({ actorId: 'a' }), send: raw => messages.push(JSON.parse(raw)), close() {} };
   h.sockets.push(socket);
