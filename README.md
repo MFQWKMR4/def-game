@@ -5,10 +5,10 @@
 
 ## Getting Started
 
-Node.js 22以降が必要です。v6.2.0の利用手順です。
+Node.js 22以降が必要です。v6.3.0の利用手順です。
 
 ```sh
-npx def-game@6.2.0 init-worker --directory my-game --name my-game
+npx def-game@6.3.0 init-worker --directory my-game --name my-game
 cd my-game
 npm install
 npm run dev

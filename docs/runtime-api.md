@@ -470,10 +470,10 @@ requestIdは応答の対応付け用で、永続的な重複排除には使い�
 
 ### 始め方
 
-Node.js 22以降を使用します。`6.2.0`を指定して生成します。
+Node.js 22以降を使用します。`6.3.0`を指定して生成します。
 
 ```sh
-npx def-game@6.2.0 init-worker --directory my-game --name my-game
+npx def-game@6.3.0 init-worker --directory my-game --name my-game
 cd my-game
 npm install
 npm run dev
@@ -481,7 +481,7 @@ npm run dev
 
 開発版をこのリポジトリから試す場合は、リポジトリで`npm pack`を実行します。
 `node bin/def-game.cjs init-worker --directory /path/to/my-game --name my-game`で生成し、生成先で
-`npm install /absolute/path/to/def-game-6.2.0.tgz`を実行してください。
+`npm install /absolute/path/to/def-game-6.3.0.tgz`を実行してください。
 その後は`npm run typecheck`、`npm run build`、`npm run dev`を利用できます。buildはWranglerのdry-runで、公開しません。
 
 生成先は新しいディレクトリに限定します。既存ディレクトリは空でも拒否します。

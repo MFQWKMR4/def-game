@@ -55,10 +55,10 @@ WS接続後のメッセージはライブラリのWS処理へ届き、毎回Work
 
 ## 1. init-workerで開発を始める
 
-Node.js 22以降で、次を実行します。以下は`6.2.0`の利用手順です。
+Node.js 22以降で、次を実行します。以下は`6.3.0`の利用手順です。
 
 ```sh
-npx def-game@6.2.0 init-worker --directory my-game --name my-game
+npx def-game@6.3.0 init-worker --directory my-game --name my-game
 cd my-game
 npm install
 npm run dev
