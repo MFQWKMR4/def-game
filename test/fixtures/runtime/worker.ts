@@ -1,12 +1,13 @@
-import { SessionRuntime, getRoom, getSystemRoom, type GameAdapter, type GameTypes } from 'def-game/cloudflare';
+import { SessionRuntime, getRoom, getSystemRoom, type GameAdapter, type GameTypes, type RuntimeEffect } from 'def-game/cloudflare';
 
 interface State { members: string[]; count: number; secret: string; decision?: string; fired: string[] }
-type ActorCommand = { type: 'join' | 'increment' | 'leave' | 'external' | 'throw-effect' | 'invalid-alarm' | 'projection-error' }
+type ActorCommand = { type: 'join' | 'increment' | 'leave' | 'external' | 'throw-effect' | 'invalid-alarm' | 'projection-error' | 'delete' }
   | { type: 'schedule'; id: string; deadline: number }
   | { type: 'cancel'; id: string }
   | { type: 'trusted'; amount: number };
 type SystemCommand = { type: 'result' } | { type: 'scheduled'; id: string };
-type Effect = { type: 'external' | 'throw' } | { type: 'schedule'; id: string; deadline: number } | { type: 'cancel'; id: string };
+type Effect = { type: 'external' | 'throw' | 'delete-session' }
+  | { type: 'schedule'; id: string; deadline: number } | { type: 'cancel'; id: string };
 interface Types extends GameTypes {
   state: State; actorCommand: ActorCommand; systemCommand: SystemCommand;
   view: { count: number; actorId: string }; effect: Effect; error: string;
@@ -32,6 +33,7 @@ const adapter: GameAdapter<Env, Types> = {
       if (command.type === 'leave') return { ok: true, state: { ...state, members: state.members.filter(id => id !== context.actorId) }, effects: [] };
       if (command.type === 'schedule') return { ok: true, state: { ...state, decision: command.id }, effects: [{ type: 'schedule', id: command.id, deadline: command.deadline }] };
       if (command.type === 'cancel') return { ok: true, state, effects: [{ type: 'cancel', id: command.id }] };
+      if (command.type === 'delete') return { ok: true, state, effects: [{ type: 'delete-session' }] };
       if (command.type === 'invalid-alarm') return { ok: true, state: { ...state, count: 999 }, effects: [{ type: 'schedule', id: 'invalid', deadline: NaN }] };
       if (command.type === 'projection-error') return { ok: true, state: { ...state, count: -1 }, effects: [{ type: 'throw' }] };
       return { ok: true, state: { ...state, count: state.count + (command.type === 'trusted' ? command.amount : 1) },
@@ -44,12 +46,16 @@ const adapter: GameAdapter<Env, Types> = {
   },
   webSocket: { parseCommand(input) {
     if (typeof input !== 'object' || input === null || !('type' in input)) return null;
-    return input.type === 'increment' || input.type === 'leave' ? { type: input.type } : null;
+    return input.type === 'increment' || input.type === 'leave' || input.type === 'delete' ? { type: input.type } : null;
   } },
   canConnect: (state, actorId) => state.members.includes(actorId),
-  scheduler: { effect: effect => effect.type === 'schedule' || effect.type === 'cancel' ? effect : null,
-    command: id => ({ type: 'scheduled', id }) },
+  runtime: {
+    effect: (effect): RuntimeEffect | null => effect.type === 'schedule' || effect.type === 'cancel' ? effect
+      : effect.type === 'delete-session' ? { type: 'delete-session' } : null,
+    scheduler: { command: id => ({ type: 'scheduled', id }) },
+  },
   async executeEffect(effect) {
+    if (effect.type === 'delete-session') throw new Error('runtime effect leaked to external handler');
     if (effect.type === 'throw') throw new Error('secret effect failure');
     if (effect.type === 'external') {
       entered = true;

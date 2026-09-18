@@ -16,7 +16,7 @@ flowchart TB
   subgraph App["初期生成するアプリ所有コード：編集・置き換え可能"]
     Entry["Worker入口：HTTP／WS接続ルート<br/>認証・公開ルームIDの解決"]
     API["HTTP処理・外部情報の取得"]
-    Adapter["adapter：入力parser・接続可否・scheduler変換"]
+    Adapter["adapter：入力parser・接続可否・RuntimeEffect変換"]
     Handler["Effect handler"]
     Game["Game Definition<br/>初期状態・ルール・Actor別View"]
   end
@@ -24,6 +24,7 @@ flowchart TB
     WS["標準WS管理<br/>接続とActorの紐付け・Hibernation"]
     Runtime["共通dispatcher<br/>状態取得・Command実行・保存"]
     Alarm["永続scheduler<br/>論理予約・Alarm発火"]
+    Lifecycle["runtime lifecycle<br/>セッション削除"]
   end
   External["外部サービス"]
   Client -->|HTTP・WS接続開始| Entry
@@ -35,8 +36,10 @@ flowchart TB
   Game -->|次状態・Effect・View| Runtime
   Adapter -.->|入力・接続条件を提供| WS
   Adapter -.->|予定イベント変換を提供| Alarm
+  Adapter -.->|削除要求を提供| Lifecycle
   Runtime -->|状態と一緒に予約| Alarm
   Alarm -->|System Command| Runtime
+  Runtime -->|検証済みRuntimeEffect| Lifecycle
   Runtime -->|保存後のActor別View| WS
   WS -->|配信| Client
   API <-->|取得| External
@@ -71,7 +74,7 @@ npm run dev
 | --- | --- |
 | `src/game/types.ts` | ゲームのState・Command・View・Effect・Errorの型 |
 | `src/game/definition.ts` | 初期状態、ルール、状態遷移、Actor別View |
-| `src/game-adapter.ts` | WS入力の変換、接続可否、Alarm・外部Effectの接続 |
+| `src/game-adapter.ts` | WS入力の変換、接続可否、RuntimeEffect・外部Effectの接続 |
 | `src/external/` | デッキ取得などの外部ドメイン処理 |
 | `src/index.ts`、`src/auth.ts` | HTTPルート、認証、公開ルームIDの解決 |
 | `src/room.ts`、`wrangler.jsonc` | 共通runtimeとCloudflare DOの登録 |
@@ -195,12 +198,14 @@ webhookやマッチング処理から入力する場合は、アプリで認証�
 | `game` | 必須 | 作成したGame Definitionを渡す |
 | `webSocket.parseCommand` | 必須 | unknownの入力を許可したActor Commandへ変換。拒否はnull |
 | `canConnect` | 必須 | StateとActor IDから接続・View配信の可否を判定 |
-| `scheduler.effect`／`scheduler.command` | 予定イベントを使う場合 | Effectから論理予約への変換と、発火時のSystem Command作成 |
+| `runtime.effect` | schedule・cancel・delete-sessionを使う場合 | Effectからruntime固有操作への変換 |
+| `runtime.scheduler.command` | 予定イベントを使う場合 | 発火した予約IDからSystem Commandを作成 |
 | `executeEffect` | 外部Effectを出す場合 | 外部処理と、必要なら結果Commandの返却 |
 | `onError` | 独自の診断が必要な場合 | 失敗した区間の記録・通知 |
 
 `executeEffect`は型上は省略可能ですが、外部Effectを出すゲームでは対応するhandlerが必要です。
-scheduler用Effectはruntimeが状態と一緒に保存します。外部handlerから直接setAlarmする構成にはしません。
+schedule・cancelのRuntimeEffectはruntimeが状態と一緒に保存します。外部handlerから直接setAlarmする構成にはしません。
+delete-sessionもruntimeが実行し、ゲームからDurable Object Storageを直接操作しません。
 
 `src/room.ts`では、そのadapterを共通runtimeへ接続しています。
 
@@ -325,7 +330,7 @@ sequenceDiagram
 flowchart TB
   Input["プレイヤーの操作"] --> G["handleCommand"]
   G --> Wait["安定した入力待ち状態<br/>誰の入力・どのdecision IDを待つか"]
-  G --> Effect["scheduler用Effect<br/>イベントID・期限"]
+  G --> Effect["RuntimeEffect<br/>schedule・イベントID・期限"]
   subgraph TX["同じstorage transactionで確定"]
     State["入力待ち状態を保存"]
     Reservations["N個の論理予約を保存"]
@@ -359,6 +364,23 @@ Alarm発火時は期限に達した予約を1件ずつ通常のCommandとして�
 先のCommandがゲームを終了して次の予約を取り消せば、その予約は処理されません。
 論理予約が状態と一緒に確定することと、将来のAlarm発火が一度だけ処理されることは別です。
 ゲーム側でもイベントIDと現在状態を確認し、古い入力を適用しないようにします。
+
+### セッション削除の判断と実行を分ける
+
+```mermaid
+flowchart LR
+  Trigger["Actor操作または予定イベント"] --> Command["Command"]
+  Command --> Game["handleCommand<br/>最新Stateで削除可否を検証"]
+  Game -->|DeleteSession Effect| Adapter["runtime.effect"]
+  Adapter --> Delete["delete-session RuntimeEffect"]
+  Delete --> Runtime["SessionRuntime<br/>storage.deleteAll()"]
+```
+
+削除の時期や条件はゲーム・アプリが決め、Cloudflareのstorageを消す能力はruntimeが提供します。
+固定TTL、inactivity期間、ゲーム終了後の保持期間はDefGameの共通ポリシーではありません。
+削除が成功すると保存State・論理予約・物理Alarmがなくなり、接続中のWebSocketも閉じます。
+同じDO IDを明示的に`create()`すれば新しいセッションを作れます。永久削除や公開IDの再利用禁止が必要なら、
+空にする対象DOの外側にアプリ固有のregistryやtombstoneを置いてください。
 
 ### ゲームの参加状態を、通信の寿命から切り離す
 

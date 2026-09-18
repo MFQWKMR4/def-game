@@ -109,6 +109,28 @@ test('scheduler persists multiple reservations and projects only the earliest ph
   assert.deepEqual(snapshot.state.fired, ['early']); assert.equal(snapshot.reservations, undefined); assert.equal(snapshot.alarm, null);
 });
 
+test('delete-session removes state, reservations and alarm, then closes sockets after command response', async () => {
+  const stub = await setup('delete');
+  await post('delete', { type: 'schedule', id: 'expiry', deadline: Date.now() + 60000 });
+  const client = await socket('delete');
+  await until(() => client.messages.length);
+  let closeEvent;
+  client.ws.addEventListener('close', event => { closeEvent = event; });
+  client.ws.send(JSON.stringify({ type: 'GameCommandRequest', requestId: 'delete', command: { type: 'delete' } }));
+  await until(() => client.messages.some(message => message.requestId === 'delete'));
+  assert.equal(client.messages.find(message => message.requestId === 'delete').ok, true);
+  await until(() => closeEvent);
+  assert.equal(closeEvent.code, 1000);
+
+  const snapshot = await stub.inspect();
+  assert.equal(snapshot.state, undefined); assert.equal(snapshot.reservations, undefined); assert.equal(snapshot.alarm, null);
+  assert.equal(snapshot.errors.includes('effect'), false);
+  assert.equal((await stub.getView({ actorId: 'alice' })).error.code, 'RoomNotFound');
+  assert.equal((await stub.dispatchActor({ actorId: 'alice' }, { type: 'increment' })).error.code, 'RoomNotFound');
+  assert.equal((await mf.dispatchFetch('https://test/connect?room=delete&actor=alice',
+    { headers: { upgrade: 'websocket' } })).status, 404);
+});
+
 test('projection failure cannot turn committed success into failure or suppress external effects', async () => {
   const stub = await setup('projection'); const s = await socket('projection');
   await until(() => s.messages.length);

@@ -40,7 +40,7 @@ interface Types extends GameTypes {
 | `actorCommand` | 認証済みActorの操作。サーバー取得済み情報を含めてもよい | 操作がなければnever |
 | `systemCommand` | Alarmや外部処理の結果等、サーバー起点の操作 | never |
 | `view` | Actorに公開する情報とavailableActions | 必須 |
-| `effect` | ゲームが宣言するAlarm・外部処理の種類と引数 | never |
+| `effect` | ゲームが宣言するruntime操作・外部処理の種類と引数 | never |
 | `error` | ゲーム上の拒否理由。文字列unionやオブジェクト等 | 拒否がなければnever |
 
 runtimeはStateの内部構造を解釈しません。`undefined`は未作成判定に使うためStateとして返せません。
@@ -62,9 +62,11 @@ export interface GameAdapter<Env, T extends GameTypes> {
     readonly parseCommand: (input: unknown) => T["actorCommand"] | null;
   };
   readonly canConnect: (state: T["state"], actorId: string) => boolean;
-  readonly scheduler?: {
-    readonly effect: (effect: T["effect"]) => ScheduledEffect | null;
-    readonly command: (id: string) => T["systemCommand"];
+  readonly runtime?: {
+    readonly effect: (effect: T["effect"]) => RuntimeEffect | null;
+    readonly scheduler?: {
+      readonly command: (id: string) => T["systemCommand"];
+    };
   };
   /** 保存後のbest-effort処理。結果はruntimeがSystem Commandとして再度dispatchする。 */
   readonly executeEffect?: (effect: T["effect"], context: { readonly env: Env; readonly roomId: string })
@@ -79,7 +81,7 @@ export interface GameAdapter<Env, T extends GameTypes> {
 | `game` | 純粋な初期状態生成・ルール・View生成を提供 | 必須 |
 | `webSocket.parseCommand` | クライアントが指定してよい入力をCommandへ変換 | 必須 |
 | `canConnect` | Actorの接続とView配信を許可するか判断 | 必須 |
-| `scheduler` | 論理的な予定イベントをCloudflare Alarmにつなぐ | 予定イベントを使う場合 |
+| `runtime` | Effectをruntime固有のschedule・cancel・delete-sessionへ変換 | runtime操作を使う場合 |
 | `executeEffect` | Alarm以外のEffectを実行し、必要なら結果を返す | 外部Effectを出す場合 |
 | `onError` | runtimeの診断情報を受け取る | 任意 |
 
@@ -222,34 +224,39 @@ HTTPから`dispatchActor`へ渡したCommandには、このWS parserは適用さ
 falseなら接続開始は403、WS Commandは`NotRoomMember`として拒否し、配信対象なら接続を閉じます。
 HTTP／SystemのCommand認可には使われないため、`handleCommand`の検証は必須です。
 
-### scheduler.effect / scheduler.command
+### runtime.effect / runtime.scheduler.command
 
 ```ts
-scheduler?: {
-  effect: (effect: T['effect']) => ScheduledEffect | null;
-  command: (id: string) => T['systemCommand'];
+runtime?: {
+  effect: (effect: T['effect']) => RuntimeEffect | null;
+  scheduler?: {
+    command: (id: string) => T['systemCommand'];
+  };
 };
 
-type ScheduledEffect =
+type RuntimeEffect =
   | { readonly type: 'schedule'; readonly id: string; readonly deadline: number }
-  | { readonly type: 'cancel'; readonly id: string };
+  | { readonly type: 'cancel'; readonly id: string }
+  | { readonly type: 'delete-session' };
 ```
 
-**目的:** ゲームが返すEffectを、状態と一緒に保存する論理的な予定イベントへ変換します。
-`effect`は成功した遷移の各Effectに対して呼ばれます。予定イベント用なら上記の形に変換し、外部Effectなら`null`を返します。
-変換したEffectは`executeEffect`へは渡されません。
+**目的:** ゲームが返すEffectを、`SessionRuntime`自身が実行するインフラ操作へ変換します。
+`runtime.effect`は成功した遷移の各Effectに対して呼ばれます。runtime操作なら上記の形に変換し、
+外部・アプリ固有のEffectなら`null`を返します。変換したEffectは`executeEffect`へは渡されません。
 
 | 戻り値 | runtimeの動作 |
 | --- | --- |
 | schedule | 同じidの予約を追加または置き換え、最も早い期限を物理Alarmへ設定 |
 | cancel | 同じidの予約を削除し、残る最も早い期限へ物理Alarmを再設定 |
+| delete-session | ゲームState・予定イベント・Alarmを含むDO storageを削除 |
 | null | 保存後に外部Effect handlerへ渡す |
 
 1ルームに複数の論理予約を保持できます。`id`は空でない文字列、`deadline`は有限のUnix時刻ミリ秒を指定します。
 予約はゲームStateとは別の`scheduled-events`へ永続化されます。Cloudflareの物理Alarmは1つだけで、常に最も早い論理予約の期限を指します。
-予約がなくなれば物理Alarmも削除されます。複数のscheduler Effectは配列順に適用します。
+予約がなくなれば物理Alarmも削除されます。複数のschedule・cancelは配列順に適用します。
 
-`command`は期限に達した論理予約の`id`からSystem Commandを作ります。必要なら`now: Date.now()`等を追加してください。
+`runtime.scheduler.command`は期限に達した論理予約の`id`からSystem Commandを作ります。
+必要なら`now: Date.now()`等を追加してください。これは予定イベントにだけ必要な逆方向の変換です。
 runtimeはイベント名の意味を解釈しません。decision timeout、inactivity、reconnect grace period等の名前と処理はアプリが決めます。
 decision timeoutもschedulerの通常の利用例であり、runtime固有の特別な予約ではありません。
 
@@ -259,9 +266,19 @@ Alarm発火時は、期限に達した最も早い予約を1件だけCommandへ�
 早すぎる発火は最も早い期限へ再設定し、ゲームによる拒否・保存失敗では予約を消費せず例外を返します。
 Alarmの予約と、将来の発火・再試行は別の実行です。一度だけ届く前提にしないでください。
 
-セッション削除はschedulerとは別のruntime lifecycle操作です。予定イベントをきっかけに削除する場合も、
-まずSystem Commandとしてゲームが最新Stateで削除の妥当性を判断し、その結果をruntimeが`storage.deleteAll()`等へ接続する境界にします。
+`delete-session`はschedulerとは別のruntime lifecycle操作です。予定イベントをきっかけに削除する場合も、
+まずSystem Commandとしてゲームが最新Stateで削除の妥当性を判断し、その結果のEffectを`runtime.effect`で変換します。
 イベントID自体へ削除の意味を持たせたり、ゲームからDurable Object Storageを直接操作したりしません。
+
+削除が同じ遷移のruntime Effectに含まれる場合、削除がschedule・cancelより優先されます。
+runtimeは返された次Stateを保存・配信せず、`storage.deleteAll()`を完了してCommandを成功として返します。
+同じ遷移の外部Effectは通常どおり`executeEffect`へ渡されますが、そのfeedback Commandが戻る時点ではRoomNotFoundになります。
+接続中のWebSocketでは削除Commandの応答を送ってから全接続を正常終了し、その後のView取得・Command・接続はRoomNotFoundになります。
+明示的に`create()`を再度呼べば、同じDO IDへ新しいセッションを作ることはできます。
+
+Cloudflareではcompatibility date `2026-02-24`以降、`deleteAll()`が保存データと物理Alarmをまとめて削除します。
+生成されるWorkerはこれより新しいdateを使います。古いcompatibility dateのアプリは
+`delete_all_deletes_alarm`を有効にするか、dateを更新してから`delete-session`を利用してください。
 
 ### executeEffect
 
