@@ -1,6 +1,6 @@
 {
   "name": "def-game",
-  "version": "6.1.0",
+  "version": "6.2.0",
   "description": "Pure game definitions, a simulator, and a Cloudflare Durable Object runtime for turn-based games",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
