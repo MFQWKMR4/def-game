@@ -40,7 +40,9 @@ module.exports = function initWorker(args) {
     fs.renameSync(path.join(stage, 'gitignore'), path.join(stage, '.gitignore'));
     // Reserve the destination exclusively before copying; never replace a racing writer.
     fs.mkdirSync(target);
-    fs.cpSync(stage, target, { recursive: true, force: false, errorOnExist: true });
+    for (const entry of fs.readdirSync(stage)) {
+      fs.cpSync(path.join(stage, entry), path.join(target, entry), { recursive: true, force: false, errorOnExist: true });
+    }
   } finally {
     fs.rmSync(stage, { recursive: true, force: true });
   }
